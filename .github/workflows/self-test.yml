@@ -19,9 +19,6 @@ on:
     branches: [master]
   workflow_dispatch:
 
-## Top-level least-privilege cap (OSSF Scorecard Token-Permissions).
-## The single 'self-test' job below only checks out and runs scripts in
-## a container; no API writes needed.
 permissions:
   contents: read
 
