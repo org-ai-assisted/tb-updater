@@ -9,6 +9,3 @@ checklist maintained in developer-meta-files:
   https://github.com/org-ai-assisted/developer-meta-files/blob/master/agents/pre-push-checklist.md
 - Static pre-push gate (install as `.git/hooks/pre-push`):
   https://github.com/org-ai-assisted/developer-meta-files/blob/master/agents/pre-push-static.sh
-
-The arithmetic-under-errexit pitfall previously documented here
-is now codified as **R-012** in the style guide.
