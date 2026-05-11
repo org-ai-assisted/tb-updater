@@ -104,6 +104,19 @@ jobs:
         run: |
           sudo -u tbtest env CI=true .github/ci/self-test -v
 
+      - name: Create tb-updater system user (mirrors tb-updater postinst)
+        ## genmkfile install copies files but does not execute the
+        ## package postinst, so the 'tb-updater' system account and its
+        ## /var/lib/tb-updater/work home directory do not exist by
+        ## default. sandbox-update-torbrowser hard-requires both. The
+        ## adduser command below is taken verbatim from
+        ## debian/tb-updater.postinst's create_tb_updater_user_account.
+        run: |
+          set -eux
+          adduser --home /var/lib/tb-updater/work --quiet --system --group tb-updater || true
+          id tb-updater
+          test -d /var/lib/tb-updater/work
+
       - name: Run sandbox-resume regression test
         ## sandbox-update-torbrowser is the postinst entry point and
         ## must run as root, so this scenario does not go through the
