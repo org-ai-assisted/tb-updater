@@ -11,6 +11,8 @@ set -o errexit
 set -o nounset
 set -o errtrace
 set -o pipefail
+shopt -s inherit_errexit
+shopt -s shift_verbose
 
 who_ami="$(whoami)"
 
@@ -69,7 +71,7 @@ esac
 
 cleanup_dir_as_tb_updater() {
   local target_dir
-  target_dir="$1"
+  target_dir="${1}"
 
   if ! [ -d "${target_dir}" ]; then
     ## Non-existent directory, skip
@@ -98,7 +100,7 @@ cleanup() {
   preserve_work_dir='false'
 
   while [ -n "${1:-}" ]; do
-    case "$1" in
+    case "${1}" in
       --preserve-work-dir)
         preserve_work_dir='true'
         shift
@@ -172,7 +174,7 @@ frozen 0"
 
 # shellcheck disable=SC2317
 error_handler() {
-  local error_code="$?"
+  local error_code="${?}"
   trap '' EXIT INT TERM
   ## Preserve the work directory on failure so that any partial download
   ## remains on disk and can be picked up by a subsequent run invoked with
@@ -200,10 +202,10 @@ exit_clean() {
 
 is_gui_enabled() {
   while [ -n "${1:-}" ]; do
-    case "$1" in
+    case "${1}" in
       --input)
         if [ -n "${2:-}" ]; then
-          TB_INPUT="$2"
+          TB_INPUT="${2}"
         fi
         shift 2
         ;;
@@ -225,7 +227,7 @@ is_gui_enabled() {
 
 is_resume_enabled() {
   while [ -n "${1:-}" ]; do
-    case "$1" in
+    case "${1}" in
       --resume)
         printf '%s\n' 'true'
         return
@@ -242,7 +244,7 @@ is_resume_enabled() {
 }
 
 validate_uuid() {
-  if [[ "$1" \
+  if [[ "${1}" \
     =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
     return 0
   fi
@@ -265,8 +267,8 @@ sandbox_update_torbrowser() {
   fi
 
   orig_wl_sock=''
-  gui_enabled="$(is_gui_enabled "$@")"
-  resume_enabled="$(is_resume_enabled "$@")"
+  gui_enabled="$(is_gui_enabled "${@}")"
+  resume_enabled="$(is_resume_enabled "${@}")"
   gui_ready='false'
   [ -n "${SUDO_USER:-}" ] || SUDO_USER=''
 
@@ -425,7 +427,7 @@ sandbox_update_torbrowser() {
         DISPLAY="${DISPLAY}" \
         QT_QPA_PLATFORM='xcb' \
         GDK_BACKEND='x11' \
-        "${updater_cmd}" "$@"
+        "${updater_cmd}" "${@}"
     else
       tb_updater_cgroup="$(/usr/libexec/helper-scripts/run-in-cgroup \
         --detach \
@@ -451,10 +453,10 @@ sandbox_update_torbrowser() {
         WAYLAND_DISPLAY='wayland-0' \
         QT_QPA_PLATFORM='wayland' \
         GDK_BACKEND='wayland' \
-        "${updater_cmd}" "$@"
+        "${updater_cmd}" "${@}"
     fi
   else
-    /usr/libexec/tb-updater/setpriv-tb-updater "${updater_cmd}" "$@"
+    /usr/libexec/tb-updater/setpriv-tb-updater "${updater_cmd}" "${@}"
   fi
 
   if [ -d "${tb_updater_home}/${tb_install_folder_dot}/${tb_browser_name}" ] \
@@ -490,4 +492,4 @@ sandbox_update_torbrowser() {
   exit_clean 0
 }
 
-sandbox_update_torbrowser "$@"
+sandbox_update_torbrowser "${@}"
