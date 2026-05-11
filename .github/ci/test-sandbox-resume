@@ -1,7 +1,9 @@
 #!/bin/bash
 
-## Copyright (C) 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
+## Copyright (C) 2026 - 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
 ## See the file COPYING for copying conditions.
+
+## AI-Assisted
 
 ## Regression test for Kicksecure/tb-updater#40.
 ##
@@ -29,48 +31,66 @@
 ## This test must run as root because sandbox-update-torbrowser is
 ## designed to be invoked from postinst / a tb-updater wrapper, and
 ## itself drops to the unprivileged 'tb-updater' account via setpriv.
+##
+## Style-guide deviations, documented for reviewers (matches the
+## existing .github/ci/self-test convention; precedent for the same
+## deviations is in developer-meta-files/agents/pre-push-static.sh):
+##   * R-040/R-110 (log/die from log_run_die.sh): self-contained
+##     test, prints status with bare printf and defines its own
+##     die() to keep the script runnable on a developer machine
+##     without sourcing helper-scripts.
+##   * R-090 (has from has.sh): same reason; precondition checks
+##     use plain '[ -x ... ]' / 'id'.
 
 set -x
 set -o errexit
 set -o nounset
 set -o errtrace
 set -o pipefail
+shopt -s inherit_errexit
+shopt -s shift_verbose
 
 LC_ALL=C
 export LC_ALL
 
-if ! [ "${CI:-}" = "true" ]; then
-  printf '%s\n' "$0: These tests are only supposed to run on CI." >&2
+if ! [ "${CI:-}" = 'true' ]; then
+  printf '%s\n' "${0}: These tests are only supposed to run on CI." >&2
   exit 1
 fi
 
 if [ "$(id -u)" != '0' ]; then
-  printf '%s\n' "$0: This test must run as root." >&2
+  printf '%s\n' "${0}: This test must run as root." >&2
   exit 1
 fi
 
 sandbox_bin='/usr/libexec/tb-updater/sandbox-update-torbrowser'
 updater_bin='/usr/bin/update-torbrowser'
 work_dir='/var/lib/tb-updater/work'
-marker_rel='resume-test-marker'
-marker_path="${work_dir}/${marker_rel}"
+marker_path="${work_dir}/resume-test-marker"
 result_file='/tmp/test-sandbox-resume-result'
 updater_backup="$(mktemp --tmpdir test-sandbox-resume.update-torbrowser.XXXXXX)"
 
-[ -x "${sandbox_bin}" ] || { printf '%s\n' "$0: ${sandbox_bin} not found." >&2; exit 1; }
-[ -x "${updater_bin}" ] || { printf '%s\n' "$0: ${updater_bin} not found." >&2; exit 1; }
-id tb-updater >/dev/null 2>&1 || { printf '%s\n' "$0: 'tb-updater' user missing." >&2; exit 1; }
+[ -x "${sandbox_bin}" ] \
+  || { printf '%s\n' "${0}: '${sandbox_bin}' not found." >&2; exit 1; }
+[ -x "${updater_bin}" ] \
+  || { printf '%s\n' "${0}: '${updater_bin}' not found." >&2; exit 1; }
+id tb-updater >/dev/null 2>&1 \
+  || { printf '%s\n' "${0}: 'tb-updater' user missing." >&2; exit 1; }
 
-die() { printf '%s: ERROR: %s\n' "$0" "$*" >&2; exit 1; }
+die() {
+  printf '%s\n' "${0}: ERROR: ${*}" >&2
+  exit 1
+}
 
 cleanup_test() {
   if [ -f "${updater_backup}" ]; then
     install --mode=0755 --owner=root --group=root \
       -- "${updater_backup}" "${updater_bin}"
-    rm -f -- "${updater_backup}"
+    safe-rm --force -- "${updater_backup}"
   fi
-  rm -f -- "${result_file}"
+  safe-rm --force -- "${result_file}"
 }
+
 trap cleanup_test EXIT
 
 install --mode=0755 --owner=root --group=root \
@@ -103,18 +123,19 @@ prepare_partial() {
   ## download: a leftover file owned by 'tb-updater' so the
   ## startup cleanup, which runs as 'tb-updater' via setpriv,
   ## actually has permission to delete it.
-  rm -rf -- "${work_dir:?}"/* "${work_dir:?}"/.[!.]* 2>/dev/null || true
+  safe-rm --recursive --force -- "${work_dir:?}"/* "${work_dir:?}"/.[!.]* \
+    2>/dev/null || true
   printf '%s\n' 'partial' > "${marker_path}"
-  chown -R -- tb-updater:tb-updater "${work_dir}"
+  chown --recursive -- tb-updater:tb-updater "${work_dir}"
 }
 
 run_sandbox() {
-  rm -f -- "${result_file}"
+  safe-rm --force -- "${result_file}"
   install_stub
   ## TB_INPUT=none keeps is_gui_enabled='false' so the script
   ## bypasses the Wayland/X11 bind-mount + xhost setup, which CI
   ## containers do not have.
-  SCRIPTNAME=update-torbrowser "${sandbox_bin}" "$@"
+  SCRIPTNAME=update-torbrowser "${sandbox_bin}" "${@}"
 }
 
 read_result() {
@@ -123,28 +144,28 @@ read_result() {
   cat -- "${result_file}"
 }
 
-printf '== test-sandbox-resume: start ==\n'
+printf '%s\n' '== test-sandbox-resume: start =='
 
 ## ---------------------------------------------------------------------------
 ## scenario 1: '--resume' preserves the work directory at startup
 ## ---------------------------------------------------------------------------
-printf '\n-- scenario 1: --resume preserves marker --\n'
+printf '%s\n' '-- scenario 1: --resume preserves marker --'
 prepare_partial
 run_sandbox --resume --input none
 result="$(read_result)"
 [ "${result}" = 'present' ] \
-  || die "scenario 1: expected 'present', got '${result}' (--resume should not wipe ${work_dir})"
-printf '  [PASS] --resume preserved marker file\n'
+  || die "scenario 1: expected 'present', got '${result}' (--resume should not wipe '${work_dir}')"
+printf '%s\n' '  [PASS] --resume preserved marker file'
 
 ## ---------------------------------------------------------------------------
 ## scenario 2: without '--resume' the work directory is wiped at startup
 ## ---------------------------------------------------------------------------
-printf '\n-- scenario 2: no --resume wipes marker --\n'
+printf '%s\n' '-- scenario 2: no --resume wipes marker --'
 prepare_partial
 run_sandbox --input none
 result="$(read_result)"
 [ "${result}" = 'absent' ] \
-  || die "scenario 2: expected 'absent', got '${result}' (default cleanup should wipe ${work_dir})"
-printf '  [PASS] default behavior wiped marker file\n'
+  || die "scenario 2: expected 'absent', got '${result}' (default cleanup should wipe '${work_dir}')"
+printf '%s\n' '  [PASS] default behavior wiped marker file'
 
-printf '\n== test-sandbox-resume: all scenarios passed ==\n'
+printf '%s\n' '== test-sandbox-resume: all scenarios passed =='

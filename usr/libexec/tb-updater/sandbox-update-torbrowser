@@ -93,8 +93,9 @@ cleanup_dir_as_tb_updater() {
 }
 
 cleanup() {
-  local xhost_output cgroup_empty_str cgroup_drained poll_count
-  local preserve_work_dir='false'
+  local xhost_output cgroup_empty_str cgroup_drained poll_count preserve_work_dir
+
+  preserve_work_dir='false'
 
   while [ -n "${1:-}" ]; do
     case "$1" in
