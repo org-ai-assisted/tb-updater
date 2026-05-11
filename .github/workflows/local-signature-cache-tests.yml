@@ -61,10 +61,12 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           ## faketime is used by make-fixture --signed-at for the
           ## "signature too old" negative scenario.
+          ## acl provides setfacl, which sandbox-update-torbrowser
+          ## requires at script-load time ('has setfacl').
           apt-get install -y --no-install-recommends \
             sq sqop libarchive-tools safe-rm \
             curl jq psmisc pv iproute2 python3 \
-            faketime
+            faketime acl
 
       - name: Checkout tb-updater
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -102,8 +104,18 @@ jobs:
         run: |
           sudo -u tbtest env CI=true .github/ci/self-test -v
 
+      - name: Run sandbox-resume regression test
+        ## sandbox-update-torbrowser is the postinst entry point and
+        ## must run as root, so this scenario does not go through the
+        ## unprivileged 'tbtest' account that the file://-fixture
+        ## tests use.
+        run: |
+          env CI=true .github/ci/test-sandbox-resume
+
       - name: Show generated caches on failure
         if: failure()
         run: |
           set +e
           find /tmp/tb-selftest.* 2>/dev/null | head -80 || true
+          ls -la /var/lib/tb-updater/work 2>/dev/null || true
+          ls -la /tmp/test-sandbox-resume-result 2>/dev/null || true

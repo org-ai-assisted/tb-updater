@@ -1,0 +1,150 @@
+#!/bin/bash
+
+## Copyright (C) 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
+## See the file COPYING for copying conditions.
+
+## Regression test for Kicksecure/tb-updater#40.
+##
+## sandbox-update-torbrowser previously called cleanup() unconditionally
+## at startup. cleanup() wiped tb_updater_home, which deleted any partial
+## Tor Browser archive from a prior failed run, so update-torbrowser
+## --resume saw no file for curl's '--continue-at -' to pick up and
+## restarted the download from byte 0.
+##
+## This test exercises the sandbox script in two configurations:
+##
+##   1. With '--resume': a marker file under tb_updater_home must still
+##      be present when the sandbox eventually hands off to the
+##      privilege-dropped updater.
+##   2. Without '--resume': the same marker file must be gone, matching
+##      the original "clean leftovers from a previous run" behavior.
+##
+## The handoff is intercepted by replacing /usr/bin/update-torbrowser
+## with a stub that records whether the marker file exists at the
+## moment the sandbox would have invoked the real updater. The stub
+## writes its observation to a path outside tb_updater_home so the
+## final cleanup at the end of a successful run does not wipe the
+## result before the harness reads it.
+##
+## This test must run as root because sandbox-update-torbrowser is
+## designed to be invoked from postinst / a tb-updater wrapper, and
+## itself drops to the unprivileged 'tb-updater' account via setpriv.
+
+set -x
+set -o errexit
+set -o nounset
+set -o errtrace
+set -o pipefail
+
+LC_ALL=C
+export LC_ALL
+
+if ! [ "${CI:-}" = "true" ]; then
+  printf '%s\n' "$0: These tests are only supposed to run on CI." >&2
+  exit 1
+fi
+
+if [ "$(id -u)" != '0' ]; then
+  printf '%s\n' "$0: This test must run as root." >&2
+  exit 1
+fi
+
+sandbox_bin='/usr/libexec/tb-updater/sandbox-update-torbrowser'
+updater_bin='/usr/bin/update-torbrowser'
+work_dir='/var/lib/tb-updater/work'
+marker_rel='resume-test-marker'
+marker_path="${work_dir}/${marker_rel}"
+result_file='/tmp/test-sandbox-resume-result'
+updater_backup="$(mktemp --tmpdir test-sandbox-resume.update-torbrowser.XXXXXX)"
+
+[ -x "${sandbox_bin}" ] || { printf '%s\n' "$0: ${sandbox_bin} not found." >&2; exit 1; }
+[ -x "${updater_bin}" ] || { printf '%s\n' "$0: ${updater_bin} not found." >&2; exit 1; }
+id tb-updater >/dev/null 2>&1 || { printf '%s\n' "$0: 'tb-updater' user missing." >&2; exit 1; }
+
+die() { printf '%s: ERROR: %s\n' "$0" "$*" >&2; exit 1; }
+
+cleanup_test() {
+  if [ -f "${updater_backup}" ]; then
+    install --mode=0755 --owner=root --group=root \
+      -- "${updater_backup}" "${updater_bin}"
+    rm -f -- "${updater_backup}"
+  fi
+  rm -f -- "${result_file}"
+}
+trap cleanup_test EXIT
+
+install --mode=0755 --owner=root --group=root \
+  -- "${updater_bin}" "${updater_backup}"
+
+## The stub replaces /usr/bin/update-torbrowser. The sandbox calls it
+## via setpriv-tb-updater --reset-env, so the stub cannot inherit
+## variables from this script and must hard-code the paths it needs.
+install_stub() {
+  cat > "${updater_bin}" <<STUB
+#!/bin/bash
+## Stub installed by ${0##*/}. Records the existence of the marker
+## file in '${work_dir}' at the moment the sandbox handed off to the
+## updater, then exits 0 so the sandbox proceeds to its end-of-run
+## cleanup. The harness reads '${result_file}' after the sandbox
+## returns.
+if [ -f '${marker_path}' ]; then
+  printf '%s\n' 'present' > '${result_file}'
+else
+  printf '%s\n' 'absent' > '${result_file}'
+fi
+chmod 0644 -- '${result_file}'
+exit 0
+STUB
+  chmod 0755 -- "${updater_bin}"
+}
+
+prepare_partial() {
+  ## Make the work directory look like it would after a failed
+  ## download: a leftover file owned by 'tb-updater' so the
+  ## startup cleanup, which runs as 'tb-updater' via setpriv,
+  ## actually has permission to delete it.
+  rm -rf -- "${work_dir:?}"/* "${work_dir:?}"/.[!.]* 2>/dev/null || true
+  printf '%s\n' 'partial' > "${marker_path}"
+  chown -R -- tb-updater:tb-updater "${work_dir}"
+}
+
+run_sandbox() {
+  rm -f -- "${result_file}"
+  install_stub
+  ## TB_INPUT=none keeps is_gui_enabled='false' so the script
+  ## bypasses the Wayland/X11 bind-mount + xhost setup, which CI
+  ## containers do not have.
+  SCRIPTNAME=update-torbrowser "${sandbox_bin}" "$@"
+}
+
+read_result() {
+  [ -f "${result_file}" ] \
+    || die "stub did not write '${result_file}'; sandbox likely aborted before reaching the updater handoff"
+  cat -- "${result_file}"
+}
+
+printf '== test-sandbox-resume: start ==\n'
+
+## ---------------------------------------------------------------------------
+## scenario 1: '--resume' preserves the work directory at startup
+## ---------------------------------------------------------------------------
+printf '\n-- scenario 1: --resume preserves marker --\n'
+prepare_partial
+run_sandbox --resume --input none
+result="$(read_result)"
+[ "${result}" = 'present' ] \
+  || die "scenario 1: expected 'present', got '${result}' (--resume should not wipe ${work_dir})"
+printf '  [PASS] --resume preserved marker file\n'
+
+## ---------------------------------------------------------------------------
+## scenario 2: without '--resume' the work directory is wiped at startup
+## ---------------------------------------------------------------------------
+printf '\n-- scenario 2: no --resume wipes marker --\n'
+prepare_partial
+run_sandbox --input none
+result="$(read_result)"
+[ "${result}" = 'absent' ] \
+  || die "scenario 2: expected 'absent', got '${result}' (default cleanup should wipe ${work_dir})"
+printf '  [PASS] default behavior wiped marker file\n'
+
+printf '\n== test-sandbox-resume: all scenarios passed ==\n'
