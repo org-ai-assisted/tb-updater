@@ -94,6 +94,19 @@ cleanup_dir_as_tb_updater() {
 
 cleanup() {
   local xhost_output cgroup_empty_str cgroup_drained poll_count
+  local preserve_work_dir='false'
+
+  while [ -n "${1:-}" ]; do
+    case "$1" in
+      --preserve-work-dir)
+        preserve_work_dir='true'
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
 
   if [ -n "${tb_updater_cgroup}" ] && validate_uuid "${tb_updater_cgroup_name}"; then
     cgroup_empty_str="populated 0
@@ -141,7 +154,15 @@ frozen 0"
 
   ## Dropping permissions before deletion so that there isn't any way for this
   ## to delete files that 'tb-updater' doesn't have permission to delete.
-  cleanup_dir_as_tb_updater "${tb_updater_home}"
+  ##
+  ## Preserve the work directory contents when requested so that partial
+  ## downloads remain on disk and can be picked up by a subsequent run
+  ## invoked with '--resume'.
+  if [ "${preserve_work_dir}" = 'true' ]; then
+    log notice "Preserving contents of '${tb_updater_home}' to support '--resume'."
+  else
+    cleanup_dir_as_tb_updater "${tb_updater_home}"
+  fi
   if [ -d "${tb_updater_run_dir}" ]; then
     cleanup_dir_as_tb_updater "${tb_updater_run_dir}"
     rmdir -- "${tb_updater_run_dir}" >/dev/null 2>&1
@@ -152,7 +173,11 @@ frozen 0"
 error_handler() {
   local error_code="$?"
   trap '' EXIT INT TERM
-  cleanup
+  ## Preserve the work directory on failure so that any partial download
+  ## remains on disk and can be picked up by a subsequent run invoked with
+  ## '--resume'. Leftovers from a previous interrupted run that the user
+  ## chooses not to resume are wiped by the startup cleanup of the next run.
+  cleanup --preserve-work-dir
   log error "END: Failed."
   exit "${error_code}"
 }
@@ -197,6 +222,24 @@ is_gui_enabled() {
   printf '%s\n' 'false'
 }
 
+is_resume_enabled() {
+  while [ -n "${1:-}" ]; do
+    case "$1" in
+      --resume)
+        printf '%s\n' 'true'
+        return
+        ;;
+      --)
+        break
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  printf '%s\n' 'false'
+}
+
 validate_uuid() {
   if [[ "$1" \
     =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -206,7 +249,7 @@ validate_uuid() {
 }
 
 sandbox_update_torbrowser() {
-  local _ gui_enabled orig_wl_sock gui_ready sock_owner xhost_output
+  local _ gui_enabled resume_enabled orig_wl_sock gui_ready sock_owner xhost_output
 
   log notice "Start."
 
@@ -222,12 +265,21 @@ sandbox_update_torbrowser() {
 
   orig_wl_sock=''
   gui_enabled="$(is_gui_enabled "$@")"
+  resume_enabled="$(is_resume_enabled "$@")"
   gui_ready='false'
   [ -n "${SUDO_USER:-}" ] || SUDO_USER=''
 
   ## Run cleanup before starting, so that if there are any problematic
   ## leftovers from a previous interrupted run, they are removed.
-  cleanup
+  ##
+  ## When '--resume' is in use, preserve the work directory so that any
+  ## partial download from a previous run can be picked up by curl's
+  ## '--continue-at -' logic in update-torbrowser.
+  if [ "${resume_enabled}" = 'true' ]; then
+    cleanup --preserve-work-dir
+  else
+    cleanup
+  fi
 
   mkdir --parents -- "${tb_updater_run_dir}"
   chown -R -- tb-updater:tb-updater "${tb_updater_run_dir}"
