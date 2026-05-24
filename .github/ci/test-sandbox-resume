@@ -168,4 +168,28 @@ result="$(read_result)"
   || die "scenario 2: expected 'absent', got '${result}' (default cleanup should wipe '${work_dir}')"
 printf '%s\n' '  [PASS] default behavior wiped marker file'
 
+## ---------------------------------------------------------------------------
+## scenario 3: a failed run with '--resume' must still preserve the work dir
+## via error_handler's 'cleanup --preserve-work-dir' so a subsequent retry
+## can keep resuming.
+## ---------------------------------------------------------------------------
+printf '%s\n' '-- scenario 3: failed --resume run preserves marker via error_handler --'
+prepare_partial
+## Stub exits non-zero so 'set -o errexit' inside the sandbox triggers
+## the EXIT/ERR trap. install_stub() would write the "present"/"absent"
+## stub; replace it with a minimal failure stub for this scenario only.
+cat > "${updater_bin}" <<'STUB'
+#!/bin/bash
+exit 23
+STUB
+chmod 0755 -- "${updater_bin}"
+sandbox_rc=0
+SCRIPTNAME=update-torbrowser "${sandbox_bin}" --resume --input none \
+  || sandbox_rc="${?}"
+[ "${sandbox_rc}" -ne 0 ] \
+  || die "scenario 3: sandbox returned 0 with a failing stub; error_handler did not fire"
+[ -f "${marker_path}" ] \
+  || die "scenario 3: marker at '${marker_path}' was wiped by error_handler; expected 'cleanup --preserve-work-dir'"
+printf '%s\n' '  [PASS] error_handler preserved marker file on failure'
+
 printf '%s\n' '== test-sandbox-resume: all scenarios passed =='
