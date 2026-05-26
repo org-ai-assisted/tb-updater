@@ -233,8 +233,14 @@ reset_state
 install_failing_stub
 sandbox_rc=0
 run_sandbox --resume --input none || sandbox_rc="${?}"
-[ "${sandbox_rc}" -ne 0 ] \
-  || die "scenario 3: sandbox returned 0 with a failing stub; error_handler did not fire"
+## The failing stub exits 23, which the sandbox's EXIT/ERR trap
+## propagates through error_handler. Asserting the exact code (not
+## just non-zero) catches the false-pass where the sandbox aborts
+## before reaching the updater handoff -- in that case the stash
+## also stays empty, but a generic 'rc != 0' assertion would not
+## have caught a regression that broke the handoff entirely.
+[ "${sandbox_rc}" -eq 23 ] \
+  || die "scenario 3: expected rc=23 from failing updater stub, got '${sandbox_rc}' (sandbox likely aborted before reaching the updater handoff)"
 [ -f "${stash_dir}/${tarball_name}" ] \
   || die "scenario 3: '${stash_dir}/${tarball_name}' missing; error_handler did not stash the tarball"
 [ -f "${stash_dir}/${signature_name}" ] \
@@ -255,8 +261,8 @@ reset_state
 install_failing_stub
 sandbox_rc=0
 run_sandbox --input none || sandbox_rc="${?}"
-[ "${sandbox_rc}" -ne 0 ] \
-  || die "scenario 4: first run returned 0 with a failing stub; error_handler did not fire"
+[ "${sandbox_rc}" -eq 23 ] \
+  || die "scenario 4: first run expected rc=23 from failing updater stub, got '${sandbox_rc}' (sandbox likely aborted before reaching the updater handoff)"
 [ -f "${stash_dir}/${tarball_name}" ] \
   || die "scenario 4: error_handler did not stash the tarball even though '--resume' was not on the first run"
 install_observer_stub
