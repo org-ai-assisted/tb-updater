@@ -165,7 +165,13 @@ run_sandbox --resume --input none
 result="$(read_result)"
 [ "${result}" = 'present' ] \
   || die "scenario 1: expected 'present', got '${result}' (--resume should restore '${tarball_name}' from '${stash_dir}')"
-printf '%s\n' '  [PASS] --resume restored stashed tarball into cache'
+## A successful run ends with a purge_stash; if that regresses,
+## stale partials would accumulate across runs without surfacing
+## elsewhere (the restore-path assertion above stays green).
+remaining="$(find "${stash_dir}" -maxdepth 1 -type f 2>/dev/null | wc -l || true)"
+[ "${remaining}" = '0' ] \
+  || die "scenario 1: '${stash_dir}' still has '${remaining}' file(s) after successful --resume; end-of-success purge_stash regressed"
+printf '%s\n' '  [PASS] --resume restored stashed tarball into cache and purged on success'
 
 ## ---------------------------------------------------------------------------
 ## scenario 2: pre-populated stash + no '--resume' purges the stash so the
@@ -232,6 +238,9 @@ run_sandbox --resume --input none
 result="$(read_result)"
 [ "${result}" = 'present' ] \
   || die "scenario 4: second run with '--resume' did not see the tarball stashed by the failed first run"
-printf '%s\n' '  [PASS] resume on retry recovers a partial from a no-resume failure'
+remaining="$(find "${stash_dir}" -maxdepth 1 -type f 2>/dev/null | wc -l || true)"
+[ "${remaining}" = '0' ] \
+  || die "scenario 4: '${stash_dir}' still has '${remaining}' file(s) after the successful retry; end-of-success purge_stash regressed"
+printf '%s\n' '  [PASS] resume on retry recovers a partial from a no-resume failure and purges on success'
 
 printf '%s\n' '== test-sandbox-resume: all scenarios passed =='
