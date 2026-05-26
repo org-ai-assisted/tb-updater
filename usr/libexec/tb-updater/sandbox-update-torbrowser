@@ -107,12 +107,10 @@ cleanup_dir_as_tb_updater() {
 }
 
 ensure_stash_dir() {
-  ## Owned by tb-updater so stash/restore/purge can all run under
-  ## setpriv-tb-updater, matching the deletion-permission model
-  ## used for tb_updater_home elsewhere in this script.
-  if [ -d "${tb_updater_stash}" ]; then
-    return 0
-  fi
+  ## Always re-apply ownership and mode, not just on create: an
+  ## earlier run that crashed between mkdir and chown would leave
+  ## a root-owned directory on disk, and the next stash/restore/purge
+  ## (which runs under setpriv-tb-updater) would then fail.
   mkdir --parents -- "${tb_updater_stash}"
   chown --recursive -- tb-updater:tb-updater "${tb_updater_stash_root}"
   chmod 0700 -- "${tb_updater_stash_root}" "${tb_updater_stash}"
@@ -239,8 +237,13 @@ error_handler() {
   ## Stash before cleanup so the partial archive survives the
   ## full-wipe; the rest of tb_updater_home (half-extracted browser
   ## trees etc.) is intentionally wiped so a failed run can't leak
-  ## state into the next one.
-  stash_tarball_to_stash
+  ## state into the next one. Stash failures are non-fatal here so
+  ## that 'set -o errexit' inside the trap can't skip the cleanup
+  ## of tb_updater_home and leave the next run with a half-state
+  ## work directory.
+  if ! stash_tarball_to_stash; then
+    log warn "Could not stash partial archive; continuing with cleanup."
+  fi
   cleanup
   log error "END: Failed."
   exit "${error_code}"
