@@ -50,6 +50,18 @@ tb_browser_name="${tb_browser_name:-tor-browser}"
 tb_global_binary_dir="${tb_global_binary_dir:-/var/cache/tb-binary}"
 root_browser_dir="${tb_global_binary_dir}"
 
+## Resume-stash: holds the partial tarball + detached signature across
+## failed runs so '--resume' can pick up where curl left off without
+## leaving the rest of tb_updater_home populated with possibly-stale
+## state from the failed run. Lives outside tb_updater_home so the
+## full-wipe cleanup of tb_updater_home does not touch it. Per-browser
+## subdirectory so update-torbrowser, update-mullvadbrowser and
+## update-i2pbrowser do not stomp on each other.
+tb_updater_stash_root='/var/lib/tb-updater/resume-stash'
+tb_updater_stash="${tb_updater_stash_root}/${tb_install_folder}"
+
+tb_downloaded_files_subpath=".cache/${tb_install_folder}/files"
+
 ## Scripts like update-mullvadbrowser simply export some environment
 ## variables, then call update-torbrowser. If sandbox-update-torbrowser is
 ## called because one of these wrappers was executed, we can either re-execute
@@ -94,22 +106,87 @@ cleanup_dir_as_tb_updater() {
   shopt -u nullglob
 }
 
+ensure_stash_dir() {
+  ## Create the per-browser resume-stash directory if it doesn't
+  ## exist. Owned by tb-updater so stash/restore/purge can all run
+  ## under setpriv-tb-updater, matching the deletion-permission
+  ## model used for tb_updater_home elsewhere in this script.
+  if [ -d "${tb_updater_stash}" ]; then
+    return 0
+  fi
+  mkdir --parents -- "${tb_updater_stash}"
+  chown --recursive -- tb-updater:tb-updater "${tb_updater_stash_root}"
+  chmod 0700 -- "${tb_updater_stash_root}" "${tb_updater_stash}"
+}
+
+stash_tarball_to_stash() {
+  ## Move the partial archive and detached signature (if either
+  ## exists) out of tb_updater_home and into the resume-stash so the
+  ## subsequent full cleanup of tb_updater_home does not destroy them.
+  ## A subsequent run invoked with '--resume' uses
+  ## restore_tarball_from_stash to put them back.
+  ##
+  ## find + '-exec mv -t TARGET +' silently no-ops when nothing
+  ## matches the glob, which is the normal case if the run failed
+  ## before curl emitted any tarball bytes.
+  local source_dir
+
+  source_dir="${tb_updater_home}/${tb_downloaded_files_subpath}"
+
+  if ! [ -d "${source_dir}" ]; then
+    return 0
+  fi
+
+  ensure_stash_dir
+  log notice "Stashing partial archive from '${source_dir}' to '${tb_updater_stash}'."
+  /usr/libexec/tb-updater/setpriv-tb-updater \
+    find "${source_dir}" -maxdepth 1 -type f \
+      \( -name '*.tar.xz' -o -name '*.tar.xz.asc' \) \
+      -exec mv -t "${tb_updater_stash}" -- '{}' +
+}
+
+restore_tarball_from_stash() {
+  ## Move the stashed tarball + signature back into the location
+  ## update-torbrowser writes to, so curl's '--continue-at -' sees a
+  ## file to resume from. Creates the cache hierarchy under
+  ## setpriv-tb-updater so ownership lines up with the rest of
+  ## tb_updater_home.
+  local target_dir
+
+  target_dir="${tb_updater_home}/${tb_downloaded_files_subpath}"
+
+  if ! [ -d "${tb_updater_stash}" ]; then
+    log notice "No stash at '${tb_updater_stash}'; nothing to restore for '--resume'."
+    return 0
+  fi
+  if [ "$(find -- "${tb_updater_stash}" -maxdepth 1 -type f | wc -l)" = '0' ]; then
+    log notice "Stash '${tb_updater_stash}' is empty; nothing to restore for '--resume'."
+    return 0
+  fi
+
+  log notice "Restoring stashed archive from '${tb_updater_stash}' to '${target_dir}'."
+  /usr/libexec/tb-updater/setpriv-tb-updater \
+    mkdir --parents -- "${target_dir}"
+  /usr/libexec/tb-updater/setpriv-tb-updater \
+    find "${tb_updater_stash}" -maxdepth 1 -type f \
+      \( -name '*.tar.xz' -o -name '*.tar.xz.asc' \) \
+      -exec mv -t "${target_dir}" -- '{}' +
+}
+
+purge_stash() {
+  ## Wipe the stash for this browser. Used on startup of a run
+  ## that did NOT pass '--resume' (so the user is not silently
+  ## resumed against their wishes), and at the end of a
+  ## successful run (so a stale partial does not survive past the
+  ## install that consumed it).
+  if ! [ -d "${tb_updater_stash}" ]; then
+    return 0
+  fi
+  cleanup_dir_as_tb_updater "${tb_updater_stash}"
+}
+
 cleanup() {
-  local xhost_output cgroup_empty_str cgroup_drained poll_count preserve_work_dir
-
-  preserve_work_dir='false'
-
-  while [ -n "${1:-}" ]; do
-    case "${1}" in
-      --preserve-work-dir)
-        preserve_work_dir='true'
-        shift
-        ;;
-      *)
-        shift
-        ;;
-    esac
-  done
+  local xhost_output cgroup_empty_str cgroup_drained poll_count
 
   if [ -n "${tb_updater_cgroup}" ] && validate_uuid "${tb_updater_cgroup_name}"; then
     cgroup_empty_str="populated 0
@@ -157,15 +234,7 @@ frozen 0"
 
   ## Dropping permissions before deletion so that there isn't any way for this
   ## to delete files that 'tb-updater' doesn't have permission to delete.
-  ##
-  ## Preserve the work directory contents when requested so that partial
-  ## downloads remain on disk and can be picked up by a subsequent run
-  ## invoked with '--resume'.
-  if [ "${preserve_work_dir}" = 'true' ]; then
-    log notice "Preserving contents of '${tb_updater_home}' to support '--resume'."
-  else
-    cleanup_dir_as_tb_updater "${tb_updater_home}"
-  fi
+  cleanup_dir_as_tb_updater "${tb_updater_home}"
   if [ -d "${tb_updater_run_dir}" ]; then
     cleanup_dir_as_tb_updater "${tb_updater_run_dir}"
     rmdir -- "${tb_updater_run_dir}" >/dev/null 2>&1
@@ -176,11 +245,16 @@ frozen 0"
 error_handler() {
   local error_code="${?}"
   trap '' EXIT INT TERM
-  ## Preserve the work directory on failure so that any partial download
-  ## remains on disk and can be picked up by a subsequent run invoked with
-  ## '--resume'. Leftovers from a previous interrupted run that the user
-  ## chooses not to resume are wiped by the startup cleanup of the next run.
-  cleanup --preserve-work-dir
+  ## Stash the partial tarball + detached signature (if any) into
+  ## the resume-stash so a subsequent run invoked with '--resume'
+  ## can pick up where curl left off. Everything else in
+  ## tb_updater_home is wiped by the cleanup that follows, so a
+  ## failed run cannot leave half-extracted browser trees or other
+  ## stale state behind. A subsequent run without '--resume'
+  ## purges the stash before the updater runs, so the user is not
+  ## silently resumed against their wishes.
+  stash_tarball_to_stash
+  cleanup
   log error "END: Failed."
   exit "${error_code}"
 }
@@ -272,16 +346,25 @@ sandbox_update_torbrowser() {
   gui_ready='false'
   [ -n "${SUDO_USER:-}" ] || SUDO_USER=''
 
-  ## Run cleanup before starting, so that if there are any problematic
-  ## leftovers from a previous interrupted run, they are removed.
+  ## Always run a full cleanup of tb_updater_home so each run starts
+  ## from a known-good state and any half-extracted browser tree or
+  ## other stale state from a previous interrupted run is removed.
   ##
-  ## When '--resume' is in use, preserve the work directory so that any
-  ## partial download from a previous run can be picked up by curl's
-  ## '--continue-at -' logic in update-torbrowser.
+  ## The partial tarball + detached signature, if any, were moved
+  ## into the resume-stash by error_handler when the previous run
+  ## failed; the cleanup above does NOT touch the stash because the
+  ## stash lives outside tb_updater_home.
+  ##
+  ## - With '--resume': move the stashed archive back into the
+  ##   cache directory update-torbrowser writes to, so curl's
+  ##   '--continue-at -' has a file to resume from.
+  ## - Without '--resume': purge the stash so the user is not
+  ##   silently resumed against the prior failed run.
+  cleanup
   if [ "${resume_enabled}" = 'true' ]; then
-    cleanup --preserve-work-dir
+    restore_tarball_from_stash
   else
-    cleanup
+    purge_stash
   fi
 
   mkdir --parents -- "${tb_updater_run_dir}"
@@ -485,6 +568,12 @@ sandbox_update_torbrowser() {
     chmod --recursive og+rX -- "${root_browser_dir}"
     chmod --recursive u+rwX -- "${root_browser_dir}"
   fi
+
+  ## The run succeeded. Drop any stashed partial archive: the install
+  ## that just completed makes it stale, and leaving it would mean a
+  ## later run invoked with '--resume' tries to resume a download
+  ## that has no purpose.
+  purge_stash
 
   log notice "Cleaning up '${tb_updater_home}'."
 

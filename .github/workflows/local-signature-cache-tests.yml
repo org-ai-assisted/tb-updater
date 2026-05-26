@@ -130,5 +130,6 @@ jobs:
         run: |
           set +e
           find /tmp/tb-selftest.* 2>/dev/null | head -80 || true
-          ls -la /var/lib/tb-updater/work 2>/dev/null || true
+          find /var/lib/tb-updater/work -maxdepth 4 2>/dev/null || true
+          find /var/lib/tb-updater/resume-stash -maxdepth 3 2>/dev/null || true
           ls -la /tmp/test-sandbox-resume-result 2>/dev/null || true
