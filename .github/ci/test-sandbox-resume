@@ -51,6 +51,7 @@ cache_subpath='.cache/tb/files'
 cache_dir="${work_dir}/${cache_subpath}"
 result_file='/tmp/test-sandbox-resume-result'
 updater_backup="$(mktemp --tmpdir test-sandbox-resume.update-torbrowser.XXXXXX)"
+backup_made='false'
 
 [ -x "${sandbox_bin}" ] \
   || { printf '%s\n' "${0}: '${sandbox_bin}' not found." >&2; exit 1; }
@@ -65,18 +66,26 @@ die() {
 }
 
 cleanup_test() {
-  if [ -f "${updater_backup}" ]; then
+  ## Only restore from the backup if we know the backup actually
+  ## holds the real updater bytes. mktemp creates an empty file at
+  ## ${updater_backup} before the install below copies the real
+  ## binary into it; if that install fails (transient I/O,
+  ## permissions, disk full) and we restored on '-f' alone, we
+  ## would copy the empty mktemp placeholder back over
+  ## /usr/bin/update-torbrowser and brick the updater for the rest
+  ## of the CI job.
+  if [ "${backup_made}" = 'true' ]; then
     install --mode=0755 --owner=root --group=root \
       -- "${updater_backup}" "${updater_bin}"
-    safe-rm --force -- "${updater_backup}"
   fi
-  safe-rm --force -- "${result_file}"
+  safe-rm --force -- "${updater_backup}" "${result_file}"
 }
 
 trap cleanup_test EXIT
 
 install --mode=0755 --owner=root --group=root \
   -- "${updater_bin}" "${updater_backup}"
+backup_made='true'
 
 reset_state() {
   ## Start each scenario from empty work_dir, empty stash. Wipe by
