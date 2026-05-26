@@ -126,9 +126,9 @@ stash_tarball_to_stash() {
   ## A subsequent run invoked with '--resume' uses
   ## restore_tarball_from_stash to put them back.
   ##
-  ## find + '-exec mv -t TARGET +' silently no-ops when nothing
-  ## matches the glob, which is the normal case if the run failed
-  ## before curl emitted any tarball bytes.
+  ## find + '-exec mv --target-directory=TARGET +' silently no-ops
+  ## when nothing matches the glob, which is the normal case if the
+  ## run failed before curl emitted any tarball bytes.
   local source_dir
 
   source_dir="${tb_updater_home}/${tb_downloaded_files_subpath}"
@@ -142,7 +142,7 @@ stash_tarball_to_stash() {
   /usr/libexec/tb-updater/setpriv-tb-updater \
     find "${source_dir}" -maxdepth 1 -type f \
       \( -name '*.tar.xz' -o -name '*.tar.xz.asc' \) \
-      -exec mv -t "${tb_updater_stash}" -- '{}' +
+      -exec mv --target-directory="${tb_updater_stash}" -- '{}' +
 }
 
 restore_tarball_from_stash() {
@@ -170,7 +170,7 @@ restore_tarball_from_stash() {
   /usr/libexec/tb-updater/setpriv-tb-updater \
     find "${tb_updater_stash}" -maxdepth 1 -type f \
       \( -name '*.tar.xz' -o -name '*.tar.xz.asc' \) \
-      -exec mv -t "${target_dir}" -- '{}' +
+      -exec mv --target-directory="${target_dir}" -- '{}' +
 }
 
 purge_stash() {
