@@ -5,57 +5,19 @@
 
 ## AI-Assisted
 
-## Regression test for Kicksecure/tb-updater#40.
+## Regression test for Kicksecure/tb-updater#40: the resume-stash
+## design in sandbox-update-torbrowser. Each scenario carries its
+## own inline rationale.
 ##
-## sandbox-update-torbrowser used to call cleanup() unconditionally
-## at startup and on failure. cleanup() wipes tb_updater_home, which
-## deleted any partial Tor Browser archive from a prior failed run,
-## so update-torbrowser --resume saw no file for curl's
-## '--continue-at -' to pick up and restarted the download from
-## byte 0.
+## Must run as root: sandbox-update-torbrowser is the postinst entry
+## point and itself drops to the 'tb-updater' account via setpriv.
 ##
-## Fix design: a resume-stash at /var/lib/tb-updater/resume-stash/
-## holds just the partial tarball + detached signature across runs.
-## On failure, error_handler moves '*.tar.xz' / '*.tar.xz.asc' from
-## tb_updater_home/.cache/${install_folder}/files/ into the stash
-## and then full-wipes tb_updater_home, so nothing else from the
-## failed run survives. On the next startup the sandbox always
-## full-wipes tb_updater_home and then either restores the stashed
-## archive (with '--resume') or purges the stash (without).
-##
-## This test exercises the four cases:
-##
-##   1. Pre-populated stash + '--resume': stashed tarball is moved
-##      back into tb_updater_home so the updater sees it.
-##   2. Pre-populated stash + no '--resume': stash is purged
-##      before the updater runs, so the updater does NOT see it.
-##   3. A failed run that wrote a tarball into the cache dir
-##      results in that tarball ending up in the stash.
-##   4. End-to-end: a failed run with no '--resume' followed by a
-##      resume run still picks up the partial. This is the UX case
-##      the reviewer called out -- a user who forgets to pass
-##      '--resume' on the failing first run can still resume on
-##      the second.
-##
-## The handoff is intercepted by replacing /usr/bin/update-torbrowser
-## with a stub. Two stub shapes are used: one that records whether a
-## marker file exists at handoff time (cases 1/2/4-part-2), and one
-## that writes a marker into the cache then exits non-zero so the
-## sandbox's error_handler trap fires (cases 3/4-part-1).
-##
-## This test must run as root because sandbox-update-torbrowser is
-## designed to be invoked from postinst / a tb-updater wrapper, and
-## itself drops to the unprivileged 'tb-updater' account via setpriv.
-##
-## Style-guide deviations, documented for reviewers (matches the
-## existing .github/ci/self-test convention; precedent for the same
-## deviations is in developer-meta-files/agents/pre-push-static.sh):
-##   * R-040/R-110 (log/die from log_run_die.sh): self-contained
-##     test, prints status with bare printf and defines its own
-##     die() to keep the script runnable on a developer machine
-##     without sourcing helper-scripts.
-##   * R-090 (has from has.sh): same reason; precondition checks
-##     use plain '[ -x ... ]' / 'id'.
+## Style-guide deviations (matches the existing .github/ci/self-test
+## and developer-meta-files/agents/pre-push-static.sh precedents):
+##   * R-040/R-110 (log/die from log_run_die.sh): self-contained,
+##     uses bare printf and a local die() so the script runs on a
+##     developer machine without sourcing helper-scripts.
+##   * R-090 (has from has.sh): same reason; uses '[ -x ... ]'.
 
 set -x
 set -o errexit

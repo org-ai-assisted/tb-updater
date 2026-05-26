@@ -2162,24 +2162,15 @@ y/n?"
    ## write to real_cache_folder directly. sandbox-update-torbrowser will move
    ## these files into real_cache_folder later.
    ##
-   ## Direct 'printf > file' rather than the 'overwrite' helper from
-   ## helper-scripts: the helper's temp-file-and-rename pipeline,
-   ## when driven from update-torbrowser inside the
-   ## local-signature-cache-tests CI environment on Debian trixie,
-   ## emits a leading newline before the value. The
-   ## scenario_second_run_cache_hit_tb, scenario_tampered_cache_rejected
-   ## and scenario_second_run_mullvad_cache_hit scenarios fail
-   ## because read_integer_file then sees '\n1779776891' and
-   ## rejects it as "Non-numeric value". The bug does not reproduce
-   ## outside CI (Python 3.13.5 + Debian trixie + the exact apt mix
-   ## from .github/workflows/local-signature-cache-tests.yml is
-   ## required to trigger it) so a root-cause fix in
-   ## helper-scripts/append-shared cannot be confirmed from here.
-   ## The cache files are tiny per-user values that
-   ## read_integer_file already validates on read, so the atomic
-   ## temp-and-rename semantics of 'overwrite' are not needed --
-   ## a torn write just gets rejected and the run proceeds as a
-   ## fresh install, the same fallback the helper provided.
+   ## Direct 'printf > file' instead of the 'overwrite' helper: the helper
+   ## emits a leading newline before the value in the
+   ## local-signature-cache-tests CI environment, which read_integer_file
+   ## then rejects as non-numeric (failing scenario_second_run_cache_hit_tb,
+   ## scenario_tampered_cache_rejected, scenario_second_run_mullvad_cache_hit).
+   ## Could not reproduce outside CI, so a root-cause fix in
+   ## helper-scripts/append-shared can't be confirmed from here. These cache
+   ## files are tiny values that read_integer_file already validates on
+   ## read, so the helper's atomic temp-and-rename is not load-bearing.
    printf '%s\n' "${sig_creation_date}" > "${tb_cache_folder}/last_used_gpg_bash_lib_output_signed_on_date"
    printf '%s\n' "${sig_creation_unixtime}" > "${tb_cache_folder}/last_used_gpg_bash_lib_output_signed_on_unixtime"
 }
