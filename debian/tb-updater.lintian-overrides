@@ -1,8 +1,3 @@
-## The postinst enables errexit via the long-form 'set -o errexit' in its
-## strict-mode block. lintian's scripts check only matches the short 'set -e',
-## so it wrongly reports the script as ignoring errors. False positive.
-tb-updater: maintainer-script-ignores-errors [postinst]
-
 ## The placeholder ships /var/cache/tb-updater so Qubes bind-dirs.sh can bind
 ## the directory for AppVM persistence; bind-dirs cannot create a missing
 ## target. See the placeholder file. Deliberate.
