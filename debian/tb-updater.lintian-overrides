@@ -2,8 +2,9 @@
 ## 'set -e'.
 tb-updater: maintainer-script-ignores-errors [postinst]
 
-## We need a directory at /var/cache/tb-updater so that Qubes' bind-dirs.sh
-## works.
+## The placeholder ships /var/cache/tb-updater so Qubes bind-dirs.sh can bind
+## the directory for AppVM persistence; bind-dirs cannot create a missing
+## target. See the placeholder file. Deliberate.
 tb-updater: file-in-unusual-dir [var/cache/tb-updater/placeholder]
 
 ## The postinst tests for /var/lib/dpkg/info/whonix-ws-network-conf.prerm to
