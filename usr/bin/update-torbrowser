@@ -5,7 +5,7 @@
 
 ## SC1091: shellcheck cannot follow runtime-dynamic 'source' targets in
 ##   this file (helper-scripts, boot-session-detection variants,
-##   /usr/share/tb-updater/tbb_hardcoded_version*,
+##   /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_*,
 ##   /usr/libexec/tb-updater/version-validator, per-browser config
 ##   snippets). The sourced scripts should be linted separately.
 ## SC2154: the same sourced scripts set tbb_hardcoded_version,
@@ -41,6 +41,7 @@ if [ "${tb_updater_was_sourced}" = "false" ]; then
   set -o errtrace
   shopt -s inherit_errexit
   shopt -s shift_verbose
+  export LC_ALL=C
 fi
 
 who_ami="$(whoami)"
@@ -1323,12 +1324,12 @@ tb_local_version_detection() {
    true "INFO: tbb_download_alpha_version: ${tbb_download_alpha_version}"
    if [ "${tbb_download_alpha_version:-}" = "true" ]; then
       ## sets: tbb_hardcoded_version
-      source /usr/share/tb-updater/tbb_hardcoded_version_alpha
+      source /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_alpha
       log notice "Using alpha version. See:
 ${tb_documentation_base_url_clearnet}/wiki/${tb_wiki}#Alpha"
    else
       ## sets: tbb_hardcoded_version
-      source /usr/share/tb-updater/tbb_hardcoded_version
+      source /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_stable
       log notice "Using stable version. For alpha version, see: ${tb_documentation_base_url_clearnet}/wiki/${tb_wiki}#Alpha"
    fi
 
@@ -1736,7 +1737,7 @@ tb_openpgp_verify() {
    ## Overridable via environment or the '--danger-insecure-self-test' flag
    ## so the self-test fixtures can supply their own signing certificate.
    ## Not declared 'local' so the env-exported value is visible here.
-   [ -n "${signing_key:-}" ] || signing_key="/usr/share/torbrowser-updater-keys.d/tbb-team.asc"
+   [ -n "${signing_key:-}" ] || signing_key="/usr/share/dist-system-metadata/tb-updater/tbb-team.asc"
 
    log notice "Digital signature (OpenPGP) verification using Sequoia-PGP... This will take a moment..."
    log notice "Using digital signature signing key by The Tor Project."

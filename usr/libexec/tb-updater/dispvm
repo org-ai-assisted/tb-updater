@@ -75,23 +75,33 @@ main() {
       exit 0
    fi
 
-   ## Mount point must be existing to be able to use mount.
-   mkdir --parents -- "/home/${user_name}/.tb"
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
-   mkdir --parents -- "/home/${user_name}/.cache/tb"
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
-   ## .cache will end up owned by root if it doesn't already exist.
-   ## https://forums.whonix.org/t/home-user-cache-permission-issue-in-recent-updates/21427
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
+   touch -- /run/tb-updater-dispvm.done
 
-   chown --recursive -- "${user_name}:${user_name}" /var/cache/tb-binary
-   ## Could alternatively do after mounting:
-   #chown --recursive "${user_name}:${user_name}" "/home/${user_name}/.tb"
-   #chown --recursive "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
-   ## But that would not give any security advantage since changing permissions
-   ## after bind mount will also result in the original folder changing
-   ## permissions.
+   ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
+   ## because this script is run before sysinit.target comes up.
+   for tb_mount_point in \
+      "/home/${user_name}/.tb" \
+      "/home/${user_name}/.cache" \
+      "/home/${user_name}/.cache/tb" ; do
+      if [ -L "${tb_mount_point}" ]; then
+         printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
+         exit 1
+      fi
+   done
 
+   ## There is no way to prevent chown from dereferencing symlinks that occur
+   ## anywhere other than the last path component. --no-dereference is defense
+   ## in depth but not entirely safe, we rely on the symlink check above for
+   ## safety here.
+   mkdir --parents -- "/home/${user_name}/.tb" "/home/${user_name}/.cache/tb"
+   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
+   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
+   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
+
+   chown --recursive --no-dereference -- "${user_name}:${user_name}" /var/cache/tb-binary
+
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
    if [ -d "/var/cache/tb-binary/.tb" ]; then
       mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.tb" "/home/${user_name}/.tb"
    fi
