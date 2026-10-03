@@ -75,29 +75,10 @@ main() {
       exit 0
    fi
 
-   ## Stamp BEFORE any setup so the unit's
-   ## 'ConditionPathExists=!/run/tb-updater-dispvm.done' skips EVERY re-run this
-   ## boot, including after a REJECTED or failed first attempt. Stamping only on
-   ## success would leave a failed first run (e.g. the symlink guard below
-   ## tripping on a pre-planted link) unstamped, letting a manual restart during
-   ## a live session re-enter the mount check-to-use race. Root-owned tmpfs /run:
-   ## the user cannot forge or remove the stamp; it clears on reboot.
    touch -- /run/tb-updater-dispvm.done
 
-   ## Mount points must exist to be able to use mount.
-   ##
-   ## Reject a symlink at any of these paths FIRST: a root symlink-follow would
-   ## be an LPE (CWE-59). The DispVM home is a clone of the DVM Template home, so
-   ## the unprivileged user can pre-plant such a link before this early-boot root
-   ## service runs; the guard catches it.
-   ##
-   ## The 'chown' calls below use '--no-dereference' and never follow a symlink.
-   ## Only 'mount --bind' can follow a symlinked mount point, which the guard
-   ## rejects. There is no check-to-use (TOCTOU) race, because this unit runs
-   ## ONLY at boot ('Before=sysinit.target', before any user or qrexec process):
-   ## dpkg never starts or restarts it during a live session (debian/rules pins
-   ## 'dh_installsystemd --no-start' for this unit), so no unprivileged process
-   ## is ever running concurrently to swap a path after the check.
+   ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
+   ## because this script is run before sysinit.target comes up.
    for tb_mount_point in \
       "/home/${user_name}/.tb" \
       "/home/${user_name}/.cache" \
@@ -108,10 +89,10 @@ main() {
       fi
    done
 
-   ## 'mkdir --parents .cache/tb' also creates '.cache'. 'chown --no-dereference'
-   ## then fixes ownership of both newly created and pre-existing directories
-   ## (e.g. a '.cache' cloned root-owned from the DVM Template -- forums 21427),
-   ## safe now that the symlink guard above ran.
+   ## There is no way to prevent chown from dereferencing symlinks that occur
+   ## anywhere other than the last path component. --no-dereference is defense
+   ## in depth but not entirely safe, we rely on the symlink check above for
+   ## safety here.
    mkdir --parents -- "/home/${user_name}/.tb" "/home/${user_name}/.cache/tb"
    chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
    chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
@@ -119,18 +100,13 @@ main() {
 
    chown --recursive --no-dereference -- "${user_name}:${user_name}" /var/cache/tb-binary
 
-   ## Bind the persistent Tor Browser cache into the user's home via a
-   ## TOCTOU-safe helper: it resolves the mount point with O_NOFOLLOW and mounts
-   ## against the pinned fd, so a concurrent symlink swap at the mount point
-   ## cannot redirect this root 'mount --bind' into following a symlink -- the
-   ## lifecycle-independent close of the check-to-use race (the symlink guard,
-   ## --no-start and the run-once stamp above are defense in depth around it).
-   dispvm_bin_dir="$(dirname -- "$(readlink --canonicalize -- "${BASH_SOURCE[0]}")")"
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
    if [ -d "/var/cache/tb-binary/.tb" ]; then
-      "${dispvm_bin_dir}/dispvm-bind-mount" "/var/cache/tb-binary/.tb" "/home/${user_name}/.tb"
+      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.tb" "/home/${user_name}/.tb"
    fi
    if [ -d "/var/cache/tb-binary/.cache/tb" ]; then
-      "${dispvm_bin_dir}/dispvm-bind-mount" "/var/cache/tb-binary/.cache/tb" "/home/${user_name}/.cache/tb"
+      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.cache/tb" "/home/${user_name}/.cache/tb"
    fi
 
    ## results in:

@@ -6,10 +6,6 @@ Description=Helper Service for /usr/bin/torbrowser to set file owner of /var/cac
 Documentation=https://github.com/Whonix/tb-updater
 ConditionPathExists=!/run/qubes/this-is-templatevm
 
-## Run the mount setup only ONCE per boot: the script touches this stamp (in
-## root-owned tmpfs /run, cleared each boot) after a successful DispVM setup, so
-## a later restart is skipped. Defense in depth against a restart re-running the
-## root 'mount --bind' into a check-to-use race during a live session.
 ConditionPathExists=!/run/tb-updater-dispvm.done
 
 DefaultDependencies=no

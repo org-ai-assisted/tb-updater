@@ -8,12 +8,6 @@
 %:
 	dh $@
 
-## tb-updater-dispvm.service does a one-time, pre-session mount setup; dpkg must
-## NOT start or restart it during a live user session, which would open a root
-## 'mount --bind' check-to-use race (CWE-59). '--no-start' keeps it ENABLED
-## (started at boot, before any user/qrexec process) with no dpkg session-time
-## (re)start. Each unit is handled explicitly (this debhelper has no
-## '--remaining-units'); a new unit must be added here.
 override_dh_installsystemd:
 	dh_installsystemd --no-start tb-updater-dispvm.service
 	dh_installsystemd tb-updater-first-boot.service
