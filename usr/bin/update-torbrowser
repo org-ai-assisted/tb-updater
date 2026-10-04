@@ -14,7 +14,10 @@
 # shellcheck disable=SC1091,SC2154
 
 # shellcheck source=../../../helper-scripts/usr/libexec/helper-scripts/check_runtime.bsh
-source /usr/libexec/helper-scripts/check_runtime.bsh
+if ! source /usr/libexec/helper-scripts/check_runtime.bsh ; then
+  printf '%s\n' "$0: ERROR: cannot source check_runtime.bsh!" >&2
+  exit 1
+fi
 
 : "${tpo_downloader_debug:=""}"
 if [ ! "${tpo_downloader_debug:-}" = "" ] && [[ "${tpo_downloader_debug:-}" =~ ^[0-9]+$ ]]; then
