@@ -14,7 +14,8 @@
 # shellcheck disable=SC1091,SC2154
 
 # shellcheck source=../../../helper-scripts/usr/libexec/helper-scripts/check_runtime.bsh
-if ! source /usr/libexec/helper-scripts/check_runtime.bsh ; then
+source /usr/libexec/helper-scripts/check_runtime.bsh || true
+if ! declare -F was_executed >/dev/null; then
   printf '%s\n' "$0: ERROR: cannot source check_runtime.bsh!" >&2
   exit 1
 fi
