@@ -13,6 +13,8 @@
 ##   shellcheck flags them as unset from its static view.
 # shellcheck disable=SC1091,SC2154
 
+## HELPER_SCRIPTS_PATH omitted intentionally, it would cause package install
+## failure during builds.
 # shellcheck source=../../../helper-scripts/usr/libexec/helper-scripts/check_runtime.bsh
 source /usr/libexec/helper-scripts/check_runtime.bsh || true
 if ! declare -F was_executed >/dev/null; then
