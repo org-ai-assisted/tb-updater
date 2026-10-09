@@ -98,10 +98,18 @@ main() {
    ## in depth but not entirely safe, we rely on the symlink check above for
    ## safety here.
    mkdir --parents -- "/home/${user_name}/.tb" "/home/${user_name}/.cache/tb"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
    chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
    chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
    chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
 
+   ## style-ok: lpe-symlink-follow,lpe-home-recursive-write -- root-owned
+   ## /var/cache path, not under /home; recursive chown does not follow symlinks.
    chown --recursive --no-dereference -- "${user_name}:${user_name}" /var/cache/tb-binary
 
    ## There is similarly no way to prevent mount from always dereferencing
