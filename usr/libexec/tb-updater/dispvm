@@ -4,8 +4,15 @@
 ## See the file COPYING for copying conditions.
 
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/check_runtime.bsh
-source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/check_runtime.bsh
+source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/check_runtime.bsh || true
+if ! declare -F was_executed >/dev/null; then
+   printf '%s\n' "$0: ERROR: cannot source check_runtime.bsh!" >&2
+   exit 1
+fi
 
+## Executed: strict mode BEFORE the helper sources, so a missing helper aborts
+## the oneshot instead of failing open to 'exit 0' without the bind mounts.
+## Sourced (tests): none of it, so the caller's shell options stay intact.
 if was_executed "${BASH_SOURCE[0]}"; then
    set -x
    set -o errexit
@@ -21,6 +28,11 @@ fi
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
+
+## Plain globals, not environment-derived: a test that sources this script
+## points them at a scratch tree before calling main.
+home_base_dir="/home"
+tb_binary_cache_dir="/var/cache/tb-binary"
 
 main() {
    ## The account "user" fallback is intentional.
@@ -67,36 +79,54 @@ main() {
       exit 0
    fi
 
-   if [ ! -d "/home/${user_name}" ]; then
+   if [ ! -d "${home_base_dir}/${user_name}" ]; then
       exit 0
    fi
 
-   if [ ! -d /var/cache/tb-binary ]; then
+   if [ ! -d "${tb_binary_cache_dir}" ]; then
       exit 0
    fi
 
-   ## Mount point must be existing to be able to use mount.
-   mkdir --parents -- "/home/${user_name}/.tb"
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
-   mkdir --parents -- "/home/${user_name}/.cache/tb"
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
-   ## .cache will end up owned by root if it doesn't already exist.
-   ## https://forums.whonix.org/t/home-user-cache-permission-issue-in-recent-updates/21427
-   chown -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
+   touch -- /run/tb-updater-dispvm.done
 
-   chown --recursive -- "${user_name}:${user_name}" /var/cache/tb-binary
-   ## Could alternatively do after mounting:
-   #chown --recursive "${user_name}:${user_name}" "/home/${user_name}/.tb"
-   #chown --recursive "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
-   ## But that would not give any security advantage since changing permissions
-   ## after bind mount will also result in the original folder changing
-   ## permissions.
+   ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
+   ## because this script is run before sysinit.target comes up.
+   for tb_mount_point in \
+      "${home_base_dir}/${user_name}/.tb" \
+      "${home_base_dir}/${user_name}/.cache" \
+      "${home_base_dir}/${user_name}/.cache/tb" ; do
+      if [ -L "${tb_mount_point}" ]; then
+         printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
+         exit 1
+      fi
+   done
 
-   if [ -d "/var/cache/tb-binary/.tb" ]; then
-      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.tb" "/home/${user_name}/.tb"
+   ## There is no way to prevent chown from dereferencing symlinks that occur
+   ## anywhere other than the last path component. --no-dereference is defense
+   ## in depth but not entirely safe, we rely on the symlink check above for
+   ## safety here.
+   mkdir --parents -- "${home_base_dir}/${user_name}/.tb" "${home_base_dir}/${user_name}/.cache/tb"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.tb"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache"
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
+   ## pre-session (see symlink guard above).
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache/tb"
+
+   ## style-ok: lpe-symlink-follow,lpe-home-recursive-write -- root-owned
+   ## /var/cache path, not under /home; recursive chown does not follow symlinks.
+   chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
+
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
+   if [ -d "${tb_binary_cache_dir}/.tb" ]; then
+      mount --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
    fi
-   if [ -d "/var/cache/tb-binary/.cache/tb" ]; then
-      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.cache/tb" "/home/${user_name}/.cache/tb"
+   if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
+      mount --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:

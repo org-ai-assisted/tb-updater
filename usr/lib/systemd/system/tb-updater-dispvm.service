@@ -6,6 +6,8 @@ Description=Helper Service for /usr/bin/torbrowser to set file owner of /var/cac
 Documentation=https://github.com/Whonix/tb-updater
 ConditionPathExists=!/run/qubes/this-is-templatevm
 
+ConditionPathExists=!/run/tb-updater-dispvm.done
+
 DefaultDependencies=no
 Before=sysinit.target
 Requires=local-fs.target
