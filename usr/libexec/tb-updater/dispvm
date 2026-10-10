@@ -10,6 +10,20 @@ if ! declare -F was_executed >/dev/null; then
    exit 1
 fi
 
+## Executed: strict mode BEFORE the helper sources, so a missing helper aborts
+## the oneshot instead of failing open to 'exit 0' without the bind mounts.
+## Sourced (tests): none of it, so the caller's shell options stay intact.
+if was_executed "${BASH_SOURCE[0]}"; then
+   set -x
+   set -o errexit
+   set -o nounset
+   set -o errtrace
+   set -o pipefail
+   shopt -s inherit_errexit
+   shopt -s shift_verbose
+   export LC_ALL=C
+fi
+
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/strings.bsh
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
@@ -21,15 +35,6 @@ home_base_dir="/home"
 tb_binary_cache_dir="/var/cache/tb-binary"
 
 main() {
-   set -x
-   set -o errexit
-   set -o nounset
-   set -o errtrace
-   set -o pipefail
-   shopt -s inherit_errexit
-   shopt -s shift_verbose
-   export LC_ALL=C
-
    ## The account "user" fallback is intentional.
    ## The sysmaint session is not supposed to run Tor Browser.
    user_name="user"
