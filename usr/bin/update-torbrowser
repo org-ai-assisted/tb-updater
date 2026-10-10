@@ -337,8 +337,8 @@ tb_sanity_tests() {
    has head
    has tar
    has date
-   has /usr/libexec/msgcollector/msgcollector
-   has /usr/libexec/msgcollector/pv_wrapper
+   has "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/msgcollector"
+   has "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/pv_wrapper"
    ## tbbversion function
    has grep
    ## tbbversion function
@@ -609,7 +609,7 @@ output_gui() {
    local MSG output_tool
    true "${FUNCNAME[0]}: START"
    true "${FUNCNAME[0]}: args: ${1+$@}"
-   output_tool="/usr/libexec/msgcollector/msgcollector"
+   output_tool="${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/msgcollector"
    ## Variable initialization required because 'curl-prgrs' uses "set -o nounset".
    [[ -v TB_USE_MSGCOLLECTOR ]] || TB_USE_MSGCOLLECTOR=""
    [[ -v outputfunc_verbose ]] || outputfunc_verbose=""
@@ -1509,7 +1509,7 @@ y/n?"
       else
          #printf '%s\n' "/usr/libexec/msgcollector/tb_updater_gui.py \"$type\" \"$TITLE\" \"$tbb_locally_installed_version_stripped\" \"$tbb_recommended_versions_comma_separated\" \"$MSG\" \"$question\" \"$button\")"
 
-         answer="$("/usr/libexec/msgcollector/tb_updater_gui.py" "${type}" "${TITLE}" "${tbb_locally_installed_version_stripped}" "${tbb_version_stripped}" "${MSG}" "${question}" "${button}")"
+         answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/tb_updater_gui.py" "${type}" "${TITLE}" "${tbb_locally_installed_version_stripped}" "${tbb_version_stripped}" "${MSG}" "${question}" "${button}")"
          if [ "${answer:-}" = "65536" ]; then ## Button 'Yes' has not been pressed.
             log notice "Canceled. Exit."
             tb_exit_function 10
@@ -2146,7 +2146,7 @@ y/n?"
             tb_exit_function 14
          fi
       else
-         answer="$(/usr/libexec/msgcollector/generic_gui_message.py "${type}" "${TITLE}" "${MSG}" "${question}" "${button}")"
+         answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/generic_gui_message.py" "${type}" "${TITLE}" "${MSG}" "${question}" "${button}")"
          if [ ! "${answer:-}" = "16384" ]; then ## Button 'Yes' has not been pressed.
             log notice "Canceled. Exit."
             tb_exit_function 14
@@ -2274,7 +2274,7 @@ Extracting ${tb_title}... This could take a moment..."
          --kill-after="${kill_after}" \
          "${timeout_after}" \
             bash \
-               /usr/libexec/msgcollector/pv_wrapper \
+               "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/pv_wrapper" \
                < "${pv_wrapper_fifo}" \
                &
       pv_wrapper_pid="$!"
@@ -2456,7 +2456,7 @@ y/n?"
    fi
 
    log notice "GUI is asking to start ${tb_title}."
-   answer="$(/usr/libexec/msgcollector/generic_gui_message.py "info" "${TITLE}" "${MSG}" "${question}" "${button}")"
+   answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/generic_gui_message.py" "info" "${TITLE}" "${MSG}" "${question}" "${button}")"
    if [ ! "${answer:-}" = "16384" ]; then ## Button 'Yes' has not been pressed.
       log notice "Canceled starting '${tb_title}', ok."
       return 0

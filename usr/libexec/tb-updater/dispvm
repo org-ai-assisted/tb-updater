@@ -10,7 +10,17 @@ if ! declare -F was_executed >/dev/null; then
    exit 1
 fi
 
-if was_executed "${BASH_SOURCE[0]}"; then
+# shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/strings.bsh
+source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
+# shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
+source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
+
+## Plain globals, not environment-derived: a test that sources this script
+## points them at a scratch tree before calling main.
+home_base_dir="/home"
+tb_binary_cache_dir="/var/cache/tb-binary"
+
+main() {
    set -x
    set -o errexit
    set -o nounset
@@ -19,14 +29,7 @@ if was_executed "${BASH_SOURCE[0]}"; then
    shopt -s inherit_errexit
    shopt -s shift_verbose
    export LC_ALL=C
-fi
 
-# shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/strings.bsh
-source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
-# shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
-source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
-
-main() {
    ## The account "user" fallback is intentional.
    ## The sysmaint session is not supposed to run Tor Browser.
    user_name="user"
@@ -71,11 +74,11 @@ main() {
       exit 0
    fi
 
-   if [ ! -d "/home/${user_name}" ]; then
+   if [ ! -d "${home_base_dir}/${user_name}" ]; then
       exit 0
    fi
 
-   if [ ! -d /var/cache/tb-binary ]; then
+   if [ ! -d "${tb_binary_cache_dir}" ]; then
       exit 0
    fi
 
@@ -84,9 +87,9 @@ main() {
    ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
    ## because this script is run before sysinit.target comes up.
    for tb_mount_point in \
-      "/home/${user_name}/.tb" \
-      "/home/${user_name}/.cache" \
-      "/home/${user_name}/.cache/tb" ; do
+      "${home_base_dir}/${user_name}/.tb" \
+      "${home_base_dir}/${user_name}/.cache" \
+      "${home_base_dir}/${user_name}/.cache/tb" ; do
       if [ -L "${tb_mount_point}" ]; then
          printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
          exit 1
@@ -97,28 +100,28 @@ main() {
    ## anywhere other than the last path component. --no-dereference is defense
    ## in depth but not entirely safe, we rely on the symlink check above for
    ## safety here.
-   mkdir --parents -- "/home/${user_name}/.tb" "/home/${user_name}/.cache/tb"
+   mkdir --parents -- "${home_base_dir}/${user_name}/.tb" "${home_base_dir}/${user_name}/.cache/tb"
    ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
    ## pre-session (see symlink guard above).
-   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.tb"
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.tb"
    ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
    ## pre-session (see symlink guard above).
-   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache"
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache"
    ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
    ## pre-session (see symlink guard above).
-   chown --no-dereference -- "${user_name}:${user_name}" "/home/${user_name}/.cache/tb"
+   chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache/tb"
 
    ## style-ok: lpe-symlink-follow,lpe-home-recursive-write -- root-owned
    ## /var/cache path, not under /home; recursive chown does not follow symlinks.
-   chown --recursive --no-dereference -- "${user_name}:${user_name}" /var/cache/tb-binary
+   chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
 
    ## There is similarly no way to prevent mount from always dereferencing
    ## symlinks, but the symlink guard above gives us sufficient safety.
-   if [ -d "/var/cache/tb-binary/.tb" ]; then
-      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.tb" "/home/${user_name}/.tb"
+   if [ -d "${tb_binary_cache_dir}/.tb" ]; then
+      mount --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
    fi
-   if [ -d "/var/cache/tb-binary/.cache/tb" ]; then
-      mount --bind -o nosuid,nodev -- "/var/cache/tb-binary/.cache/tb" "/home/${user_name}/.cache/tb"
+   if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
+      mount --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:
