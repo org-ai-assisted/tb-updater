@@ -10,9 +10,6 @@ if ! declare -F was_executed >/dev/null; then
    exit 1
 fi
 
-## Executed: strict mode BEFORE the helper sources, so a missing helper aborts
-## the oneshot instead of failing open to 'exit 0' without the bind mounts.
-## Sourced (tests): none of it, so the caller's shell options stay intact.
 if was_executed "${BASH_SOURCE[0]}"; then
    set -x
    set -o errexit
@@ -29,14 +26,17 @@ source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
 
-## Plain globals, not environment-derived: a test that sources this script
-## points them at a scratch tree before calling main.
 home_base_dir="/home"
 tb_binary_cache_dir="/var/cache/tb-binary"
-## Qubes private-volume home; its bind copies are remounted nosuid,nodev below.
-rw_home_base_dir="/rw/home"
+qubes_rw_home_base_dir="/rw/home"
+done_flag_file='/run/tb-updater-dispvm.done'
 
 main() {
+   if [ -f "${done_flag_file}" ]; then
+      printf '%s\n' "$0: INFO: Tor Browser already set up for DispVM use, not running setup again. OK."
+      return 0
+   fi
+
    ## The account "user" fallback is intentional.
    ## The sysmaint session is not supposed to run Tor Browser.
    user_name="user"
@@ -89,21 +89,10 @@ main() {
       exit 0
    fi
 
-   touch -- /run/tb-updater-dispvm.done
+   touch -- "${done_flag_file}"
 
-   ## Refuse a symlink at any bind source, bind target, or remount path before
-   ## the mkdir/chown/mount below. These are check-to-use pairs, but there is no
-   ## TOCTOU window: the service runs exactly ONCE per boot, at early boot before
-   ## any user/qrexec process exists to race the check -- debian/rules pins
-   ## 'dh_installsystemd --no-start' (dpkg never restarts it) and the unit sets
-   ## 'ConditionPathExists=!/run/tb-updater-dispvm.done' (a manual restart
-   ## no-ops). See tb-updater-dispvm.service and debian/rules.
-   ## Covers both sides and the /rw copies: 'chown --recursive' below makes the
-   ## cache user-owned, a DispVM home/cache is a DVM-Template clone, and the
-   ## /rw/home remount targets are user-writable -- so a symlink could be
-   ## pre-planted at any of these. '[ -L ]' checks the final component only;
-   ## listing each intermediate (.cache) covers an intermediate symlink too,
-   ## which --no-canonicalize on the bind does not.
+   ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
+   ## because this script is run before sysinit.target comes up.
    for tb_mount_point in \
       "${home_base_dir}/${user_name}/.tb" \
       "${home_base_dir}/${user_name}/.cache" \
@@ -111,9 +100,9 @@ main() {
       "${tb_binary_cache_dir}/.tb" \
       "${tb_binary_cache_dir}/.cache" \
       "${tb_binary_cache_dir}/.cache/tb" \
-      "${rw_home_base_dir}/${user_name}/.tb" \
-      "${rw_home_base_dir}/${user_name}/.cache" \
-      "${rw_home_base_dir}/${user_name}/.cache/tb" ; do
+      "${qubes_rw_home_base_dir}/${user_name}/.tb" \
+      "${qubes_rw_home_base_dir}/${user_name}/.cache" \
+      "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ; do
       if [ -L "${tb_mount_point}" ]; then
          printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
          exit 1
@@ -123,32 +112,27 @@ main() {
    ## There is no way to prevent chown from dereferencing symlinks that occur
    ## anywhere other than the last path component. --no-dereference is defense
    ## in depth but not entirely safe, we rely on the symlink check above for
-   ## safety here.
+   ## safety here. This unit won't run again after boot, so we don't have to
+   ## worry about a restart causing this to become dangerous.
    mkdir --parents -- "${home_base_dir}/${user_name}/.tb" "${home_base_dir}/${user_name}/.cache/tb"
-   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
-   ## pre-session (see symlink guard above).
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- safe.
    chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.tb"
-   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
-   ## pre-session (see symlink guard above).
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- safe.
    chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache"
-   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- boot-only,
-   ## pre-session (see symlink guard above).
+   ## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- safe.
    chown --no-dereference -- "${user_name}:${user_name}" "${home_base_dir}/${user_name}/.cache/tb"
 
    ## style-ok: lpe-symlink-follow,lpe-home-recursive-write -- root-owned
-   ## /var/cache path, not under /home; recursive chown does not follow symlinks.
+   ## /var/cache path. Recursive chown does not follow symlinks.
    chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
 
-   ## Bind the persistent cache onto the user's home. --no-canonicalize makes
-   ## mount refuse a symlinked final mountpoint component at the mount layer
-   ## regardless of timing; it does NOT guard the bind source or an intermediate
-   ## path component, which the symlink guard above covers (it checks every
-   ## source and target path, each component).
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
    if [ -d "${tb_binary_cache_dir}/.tb" ]; then
-      mount --no-canonicalize --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
+      mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
    fi
    if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
-      mount --no-canonicalize --bind -o nosuid,nodev -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
+      mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:
@@ -159,14 +143,12 @@ main() {
    # /dev/xvda3 on /home/user/.cache/tb type ext4 (rw,nosuid,nodev,noatime,discard)
    # /dev/xvda3 on /rw/home/user/.cache/tb type ext4 (rw,noatime,discard)
 
-   ## Remount the Qubes-persistent copies with nosuid,nodev. --no-canonicalize
-   ## for consistency with the binds above (accepted and harmless on remount); a
-   ## symlinked /rw/home path is already rejected by the guard above.
-   if [ -d "${rw_home_base_dir}/${user_name}/.tb" ]; then
-      mount --no-canonicalize -o remount,nosuid,nodev -- "${rw_home_base_dir}/${user_name}/.tb"
+   ## Remount with nosuid,nodev.
+   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.tb" ]; then
+      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
    fi
-   if [ -d "${rw_home_base_dir}/${user_name}/.cache/tb" ]; then
-      mount --no-canonicalize -o remount,nosuid,nodev -- "${rw_home_base_dir}/${user_name}/.cache/tb"
+   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ]; then
+      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:
