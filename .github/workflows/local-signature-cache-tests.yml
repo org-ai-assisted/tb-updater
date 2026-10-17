@@ -63,6 +63,21 @@ jobs:
           cd /tmp/msgcollector
           sudo genmkfile install
 
+      - name: Install dist-system-metadata
+        env:
+          GH_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          ## update-torbrowser sources the hardcoded TBB version from
+          ## /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_* ,
+          ## shipped by the dist-system-metadata package (a tb-updater Depends).
+          ## Clone from the same org (no implicit upstream fallback, like
+          ## msgcollector above) and install via genmkfile.
+          git clone --depth=1 \
+              "https://github.com/${GH_REPOSITORY_OWNER}/dist-system-metadata.git" \
+              /tmp/dist-system-metadata
+          cd /tmp/dist-system-metadata
+          sudo genmkfile install
+
       - name: Install tb-updater runtime + test dependencies from Debian
         run: |
           set -eux
