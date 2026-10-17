@@ -126,10 +126,12 @@ main() {
    ## /var/cache path. Recursive chown does not follow symlinks.
    chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
 
-   ## X-mount.nocanonicalize makes mount refuse a symlinked mountpoint at the
-   ## mount layer, regardless of timing (proof:
-   ## org-ai-assisted/mount-nocanonicalize-symlink-refusal). The [ -L ] reject
-   ## above still covers the bind source and intermediate path components.
+   ## The [ -L ] reject above (pre-mount, pre-session) is the primary guard: it
+   ## trips on any symlink form at these exact paths, plus the bind source and
+   ## intermediate components. X-mount.nocanonicalize is a mount-layer backstop
+   ## -- it refuses a bare dir-symlink target but NOT a trailing-slash/dot or a
+   ## file symlink (envelope: org-ai-assisted/mount-nocanonicalize-symlink-refusal).
+   ## These targets are bare dir paths, so the backstop applies.
    if [ -d "${tb_binary_cache_dir}/.tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
    fi
