@@ -128,10 +128,10 @@ main() {
 
    ## The [ -L ] reject above (pre-mount, pre-session) is the primary guard: it
    ## trips on any symlink form at these exact paths, plus the bind source and
-   ## intermediate components. X-mount.nocanonicalize is a mount-layer backstop
-   ## -- it refuses a bare dir-symlink target but NOT a trailing-slash/dot or a
-   ## file symlink (envelope: org-ai-assisted/mount-nocanonicalize-symlink-refusal).
-   ## These targets are bare dir paths, so the backstop applies.
+   ## intermediate components. X-mount.nocanonicalize is only a mount-layer
+   ## backstop (util-linux 2.41+; a no-op on older) that refuses a bare
+   ## dir-symlink target -- NOT a trailing-slash/dot or a file symlink (envelope:
+   ## org-ai-assisted/mount-nocanonicalize-symlink-refusal). These are bare dirs.
    if [ -d "${tb_binary_cache_dir}/.tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
    fi
