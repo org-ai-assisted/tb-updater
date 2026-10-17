@@ -5,7 +5,7 @@
 
 ## SC1091: shellcheck cannot follow runtime-dynamic 'source' targets in
 ##   this file (helper-scripts, boot-session-detection variants,
-##   /usr/share/tb-updater/tbb_hardcoded_version*,
+##   /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_*,
 ##   /usr/libexec/tb-updater/version-validator, per-browser config
 ##   snippets). The sourced scripts should be linted separately.
 ## SC2154: the same sourced scripts set tbb_hardcoded_version,
@@ -13,8 +13,14 @@
 ##   shellcheck flags them as unset from its static view.
 # shellcheck disable=SC1091,SC2154
 
+## HELPER_SCRIPTS_PATH omitted intentionally, it would cause package install
+## failure during builds.
 # shellcheck source=../../../helper-scripts/usr/libexec/helper-scripts/check_runtime.bsh
-source /usr/libexec/helper-scripts/check_runtime.bsh
+source /usr/libexec/helper-scripts/check_runtime.bsh || true
+if ! declare -F was_executed >/dev/null; then
+  printf '%s\n' "$0: ERROR: cannot source check_runtime.bsh!" >&2
+  exit 1
+fi
 
 : "${tpo_downloader_debug:=""}"
 if [ ! "${tpo_downloader_debug:-}" = "" ] && [[ "${tpo_downloader_debug:-}" =~ ^[0-9]+$ ]]; then
@@ -41,6 +47,7 @@ if [ "${tb_updater_was_sourced}" = "false" ]; then
   set -o errtrace
   shopt -s inherit_errexit
   shopt -s shift_verbose
+  export LC_ALL=C
 fi
 
 who_ami="$(whoami)"
@@ -330,8 +337,8 @@ tb_sanity_tests() {
    has head
    has tar
    has date
-   has /usr/libexec/msgcollector/msgcollector
-   has /usr/libexec/msgcollector/pv_wrapper
+   has "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/msgcollector"
+   has "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/pv_wrapper"
    ## tbbversion function
    has grep
    ## tbbversion function
@@ -602,7 +609,7 @@ output_gui() {
    local MSG output_tool
    true "${FUNCNAME[0]}: START"
    true "${FUNCNAME[0]}: args: ${1+$@}"
-   output_tool="/usr/libexec/msgcollector/msgcollector"
+   output_tool="${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/msgcollector"
    ## Variable initialization required because 'curl-prgrs' uses "set -o nounset".
    [[ -v TB_USE_MSGCOLLECTOR ]] || TB_USE_MSGCOLLECTOR=""
    [[ -v outputfunc_verbose ]] || outputfunc_verbose=""
@@ -1323,12 +1330,12 @@ tb_local_version_detection() {
    true "INFO: tbb_download_alpha_version: ${tbb_download_alpha_version}"
    if [ "${tbb_download_alpha_version:-}" = "true" ]; then
       ## sets: tbb_hardcoded_version
-      source /usr/share/tb-updater/tbb_hardcoded_version_alpha
+      source /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_alpha
       log notice "Using alpha version. See:
 ${tb_documentation_base_url_clearnet}/wiki/${tb_wiki}#Alpha"
    else
       ## sets: tbb_hardcoded_version
-      source /usr/share/tb-updater/tbb_hardcoded_version
+      source /usr/share/dist-system-metadata/tb-updater/tbb_hardcoded_version_stable
       log notice "Using stable version. For alpha version, see: ${tb_documentation_base_url_clearnet}/wiki/${tb_wiki}#Alpha"
    fi
 
@@ -1502,7 +1509,7 @@ y/n?"
       else
          #printf '%s\n' "/usr/libexec/msgcollector/tb_updater_gui.py \"$type\" \"$TITLE\" \"$tbb_locally_installed_version_stripped\" \"$tbb_recommended_versions_comma_separated\" \"$MSG\" \"$question\" \"$button\")"
 
-         answer="$("/usr/libexec/msgcollector/tb_updater_gui.py" "${type}" "${TITLE}" "${tbb_locally_installed_version_stripped}" "${tbb_version_stripped}" "${MSG}" "${question}" "${button}")"
+         answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/tb_updater_gui.py" "${type}" "${TITLE}" "${tbb_locally_installed_version_stripped}" "${tbb_version_stripped}" "${MSG}" "${question}" "${button}")"
          if [ "${answer:-}" = "65536" ]; then ## Button 'Yes' has not been pressed.
             log notice "Canceled. Exit."
             tb_exit_function 10
@@ -1736,7 +1743,7 @@ tb_openpgp_verify() {
    ## Overridable via environment or the '--danger-insecure-self-test' flag
    ## so the self-test fixtures can supply their own signing certificate.
    ## Not declared 'local' so the env-exported value is visible here.
-   [ -n "${signing_key:-}" ] || signing_key="/usr/share/torbrowser-updater-keys.d/tbb-team.asc"
+   [ -n "${signing_key:-}" ] || signing_key="/usr/share/dist-system-metadata/tb-updater/tbb-team.asc"
 
    log notice "Digital signature (OpenPGP) verification using Sequoia-PGP... This will take a moment..."
    log notice "Using digital signature signing key by The Tor Project."
@@ -2139,7 +2146,7 @@ y/n?"
             tb_exit_function 14
          fi
       else
-         answer="$(/usr/libexec/msgcollector/generic_gui_message.py "${type}" "${TITLE}" "${MSG}" "${question}" "${button}")"
+         answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/generic_gui_message.py" "${type}" "${TITLE}" "${MSG}" "${question}" "${button}")"
          if [ ! "${answer:-}" = "16384" ]; then ## Button 'Yes' has not been pressed.
             log notice "Canceled. Exit."
             tb_exit_function 14
@@ -2267,7 +2274,7 @@ Extracting ${tb_title}... This could take a moment..."
          --kill-after="${kill_after}" \
          "${timeout_after}" \
             bash \
-               /usr/libexec/msgcollector/pv_wrapper \
+               "${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/pv_wrapper" \
                < "${pv_wrapper_fifo}" \
                &
       pv_wrapper_pid="$!"
@@ -2449,7 +2456,7 @@ y/n?"
    fi
 
    log notice "GUI is asking to start ${tb_title}."
-   answer="$(/usr/libexec/msgcollector/generic_gui_message.py "info" "${TITLE}" "${MSG}" "${question}" "${button}")"
+   answer="$("${MSGCOLLECTOR_PATH:-}/usr/libexec/msgcollector/generic_gui_message.py" "info" "${TITLE}" "${MSG}" "${question}" "${button}")"
    if [ ! "${answer:-}" = "16384" ]; then ## Button 'Yes' has not been pressed.
       log notice "Canceled starting '${tb_title}', ok."
       return 0

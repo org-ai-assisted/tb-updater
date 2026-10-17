@@ -16,7 +16,7 @@ Package: tb-updater
 Architecture: all
 Depends: msgcollector-gui, curl, psmisc, pv, libarchive-tools,
  jq, libdbus-glib-1-2, privleap, python3, acl, helper-scripts,
- sq, sqop, ${misc:Depends}
+ sq, sqop, dist-system-metadata, ${misc:Depends}
 Recommends: tb-starter, icon-pack-dist
 Suggests: open-link-confirmation
 Description: Tor Browser Downloader by Whonix developers
