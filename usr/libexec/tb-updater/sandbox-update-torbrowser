@@ -371,14 +371,15 @@ validate_uuid() {
   return 1
 }
 
-publish_sbom_fragment() {
-  ## Publish the CycloneDX fragment update-torbrowser wrote (carried into the
-  ## global binary dir by the copy above) to the drop-in directory where
-  ## derivative-sbom merges it into the image SBOM. The browser is a downloaded
-  ## tarball, not a dpkg package, so this fragment is its only SBOM record. This
-  ## is the single chokepoint for EVERY system install (postinst AND Qubes
-  ## TemplateVM), so a global browser update always refreshes the published
-  ## fragment rather than leaving a stale one.
+save_sbom_fragment() {
+  ## Save the CycloneDX fragment update-torbrowser wrote (carried into the
+  ## global binary dir by the copy above) into the local drop-in directory
+  ## where derivative-sbom merges it into the system SBOM. This writes a file to
+  ## a local directory only -- nothing is uploaded anywhere. The browser is a
+  ## downloaded tarball, not a dpkg package, so this fragment is its only SBOM
+  ## record. This is the single chokepoint for EVERY system install (postinst
+  ## AND Qubes TemplateVM), so a global browser update always refreshes the
+  ## saved fragment rather than leaving a stale one.
   ##
   ## Best-effort: a failure here must never abort an otherwise-successful
   ## browser install. Refuse a symlink source: the fragment comes from the
@@ -390,17 +391,17 @@ publish_sbom_fragment() {
   dest="${sbom_fragments_dir}/${tb_browser_name}.cdx.json"
 
   if [ ! -f "${src}" ] || [ -L "${src}" ]; then
-    log notice "No regular SBOM fragment at '${src}', skipping publish."
+    log notice "No regular SBOM fragment at '${src}', skipping."
     return 0
   fi
   if ! mkdir --parents -- "${sbom_fragments_dir}"; then
-    log warn "Cannot create '${sbom_fragments_dir}', skipping SBOM fragment publish."
+    log warn "Cannot create '${sbom_fragments_dir}', skipping SBOM fragment save."
     return 0
   fi
   if install --mode=0644 -- "${src}" "${dest}"; then
-    log notice "Published SBOM fragment '${dest}'."
+    log notice "Saved SBOM fragment to '${dest}'."
   else
-    log warn "Cannot publish SBOM fragment to '${dest}' (non-fatal)."
+    log warn "Cannot save SBOM fragment to '${dest}' (non-fatal)."
   fi
   return 0
 }
@@ -634,7 +635,7 @@ sandbox_update_torbrowser() {
     chmod --recursive og+rX -- "${root_browser_dir}"
     chmod --recursive u+rwX -- "${root_browser_dir}"
 
-    publish_sbom_fragment
+    save_sbom_fragment
   fi
 
   ## Drop the stash on success so a later '--resume' run doesn't

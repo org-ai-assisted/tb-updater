@@ -2374,8 +2374,8 @@ tb_install() {
 ## Write a CycloneDX component fragment describing the just-installed browser,
 ## so the image SBOM (debsbom enumerates dpkg packages only) can include this
 ## non-dpkg component. Written into the cache folder, which
-## sandbox-update-torbrowser copies into the global binary dir AND publishes to
-## /usr/share/sbom/fragments.d, where derivative-sbom merges it.
+## sandbox-update-torbrowser copies into the global binary dir AND saves into
+## the local /usr/share/sbom/fragments.d, where derivative-sbom merges it.
 ##
 ## Runs ONLY on the SYSTEM (global) install path -- identified by the effective
 ## account being 'tb-updater', the unprivileged account BOTH root wrappers
@@ -2399,7 +2399,7 @@ tb_sbom_fragment_create() {
 }
 
 ## Returns nonzero on any problem; writes atomically (temp + rename) so a
-## partial fragment is never left for sandbox-update-torbrowser to publish.
+## partial fragment is never left for sandbox-update-torbrowser to save.
 tb_sbom_fragment_write() {
    local fragment_file fragment_tmp sbom_hash sbom_purl sbom_hashes_json field
    fragment_file="${tb_cache_folder}/sbom-fragment.json"
