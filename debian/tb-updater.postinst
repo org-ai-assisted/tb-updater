@@ -72,26 +72,6 @@ tb_chroot_pre_exit() {
    fi
 }
 
-publish_sbom_fragment() {
-   ## update-torbrowser wrote a CycloneDX fragment into the browser's cache
-   ## folder, which sandbox-update-torbrowser copied into the global binary
-   ## dir. Publish it to the drop-in directory where derivative-sbom merges it
-   ## into the image SBOM: the browser is a downloaded tarball, not a dpkg
-   ## package, so this fragment is its only record in the SBOM. An absent
-   ## fragment (install failed, or an older browser version) is not an error.
-   local src dest sbom_fragments_dir
-   src="$1"
-   dest="$2"
-   sbom_fragments_dir='/usr/share/sbom/fragments.d'
-   if [ ! -f "${src}" ]; then
-      log notice "No SBOM fragment at '${src}', skipping publish."
-      return 0
-   fi
-   mkdir --parents -- "${sbom_fragments_dir}"
-   install --mode=0644 -- "${src}" "${sbom_fragments_dir}/${dest}"
-   log notice "Published SBOM fragment '${sbom_fragments_dir}/${dest}'."
-}
-
 download() {
    local in_chroot tool_item
    local -a chroot_args tool_list
@@ -136,14 +116,6 @@ download() {
             log warn 'update-torbrowser-failed. Consider running update-torbrowser manually.'
          fi
       fi
-
-      case "${tool_item}" in
-         update-torbrowser)
-            publish_sbom_fragment \
-               '/var/cache/tb-binary/.cache/tb/sbom-fragment.json' \
-               'tor-browser.cdx.json'
-            ;;
-      esac
 
       if [ "${in_chroot}" = 'true' ]; then
          tb_chroot_pre_exit

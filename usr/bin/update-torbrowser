@@ -2374,33 +2374,57 @@ tb_install() {
 ## Write a CycloneDX component fragment describing the just-installed browser,
 ## so the image SBOM (debsbom enumerates dpkg packages only) can include this
 ## non-dpkg component. Written into the cache folder, which
-## sandbox-update-torbrowser copies into the global binary dir; the postinst
-## then publishes it to /usr/share/sbom/fragments.d where derivative-sbom merges
-## it. ONLY in the system (--postinst) install path: a per-user run installs a
-## private browser that is not part of the system SBOM, so it writes nothing.
-## Best-effort: never abort the install over an SBOM nicety.
+## sandbox-update-torbrowser copies into the global binary dir AND publishes to
+## /usr/share/sbom/fragments.d, where derivative-sbom merges it.
+##
+## Runs ONLY on the SYSTEM (global) install path -- identified by the effective
+## account being 'tb-updater', the unprivileged account BOTH root wrappers
+## (root_check --postinst AND qubes_template_check for a Qubes TemplateVM) drop
+## to before the root copy into /var/cache/tb-binary. A direct per-user run
+## (who_ami = the invoking user) installs a private browser into the user's home
+## that is NOT part of the system SBOM, so it writes nothing. Keying on
+## tb_postinst alone would miss the TemplateVM path and leave a stale fragment.
+##
+## Best-effort: an SBOM fragment is a nicety, never a reason to abort an
+## otherwise-successful browser install, so any failure logs and returns 0.
 tb_sbom_fragment_create() {
-   if [ ! "${tb_postinst:-}" = "true" ]; then
-      true "INFO: Skipping ${FUNCNAME[0]}, not a --postinst (system) install, ok."
+   if [ ! "${who_ami}" = "tb-updater" ]; then
+      true "INFO: Skipping ${FUNCNAME[0]}, not the system (tb-updater) install path, ok."
       return 0
    fi
+   ## Called on the LHS of '||', so errexit is off inside; the critical commands
+   ## below check their own status explicitly.
+   tb_sbom_fragment_write || log warn "SBOM fragment not written (non-fatal)."
+   return 0
+}
 
-   local fragment_file sbom_hash sbom_purl sbom_hashes_json
+## Returns nonzero on any problem; writes atomically (temp + rename) so a
+## partial fragment is never left for sandbox-update-torbrowser to publish.
+tb_sbom_fragment_write() {
+   local fragment_file fragment_tmp sbom_hash sbom_purl sbom_hashes_json field
    fragment_file="${tb_cache_folder}/sbom-fragment.json"
-
-   ## tbb_version_stripped is upstream-derived; refuse to emit a fragment with
-   ## a version that could break the JSON rather than hand-escape it.
-   if ! [[ "${tbb_version_stripped}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
-      log warn "Not writing SBOM fragment: version '${tbb_version_stripped}' has unexpected characters."
-      return 0
-   fi
 
    [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
    [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
 
+   ## Every value interpolated into the hand-built JSON must contain no '"',
+   ## '\' or control character, else the fragment would be invalid JSON and the
+   ## fail-closed merger would abort the whole image SBOM. Refuse rather than
+   ## emit broken JSON (tb_title / supplier are admin-settable via torbrowser.d).
+   for field in \
+      "${tbb_version_stripped}" "${tb_browser_name}" "${tb_title}" \
+      "${ARCH_DOWNLOAD}" "${tb_sbom_supplier}" "${tb_sbom_supplier_url}" \
+      "${TBB_PACKAGE_LINK}"; do
+      if [[ "${field}" == *'"'* ]] || [[ "${field}" == *\\* ]] \
+         || [[ "${field}" =~ [[:cntrl:]] ]]; then
+         log warn "Not writing SBOM fragment: a field has JSON-unsafe characters."
+         return 1
+      fi
+   done
+
    sbom_hash=""
    if [ -f "${TBB_PACKAGE_FULL_PATH}" ]; then
-      sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}" | cut -d' ' -f1)"
+      sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}" | cut -d' ' -f1)" || return 1
    fi
 
    sbom_purl="pkg:generic/${tb_browser_name}@${tbb_version_stripped}?arch=${ARCH_DOWNLOAD}"
@@ -2417,8 +2441,9 @@ tb_sbom_fragment_create() {
 "
    fi
 
-   mkdir --parents -- "${tb_cache_folder}"
-   cat > "${fragment_file}" <<EOF
+   mkdir --parents -- "${tb_cache_folder}" || return 1
+   fragment_tmp="$(mktemp -- "${tb_cache_folder}/sbom-fragment.json.XXXXXX")" || return 1
+   if ! cat > "${fragment_tmp}" <<EOF
 {
   "type": "application",
   "bom-ref": "${tb_browser_name}@${tbb_version_stripped}",
@@ -2443,6 +2468,14 @@ ${sbom_hashes_json}  "externalReferences": [
   ]
 }
 EOF
+   then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
+   if ! mv -- "${fragment_tmp}" "${fragment_file}"; then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
    log notice "Wrote SBOM fragment '${fragment_file}'."
 }
 

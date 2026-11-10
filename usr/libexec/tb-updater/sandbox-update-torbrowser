@@ -40,9 +40,11 @@ tb_lock_runtime_dir="${XDG_RUNTIME_DIR:-/run/user/0}"
 if [ ! -d "${tb_lock_runtime_dir}" ] || [ -L "${tb_lock_runtime_dir}" ]; then
   ## In case it's a symlink.
   safe-rm --force -- "${tb_lock_runtime_dir}"
-  # shellcheck disable=SC2174
-  mkdir --mode=0700 --parents -- /run/user/0
-  chmod 0700 -- /run/user/0
+  ## /run/user may be absent during an image build / package configuration;
+  ## create each component with its own deliberate mode (not --parents + a mode
+  ## that only reaches the final component). safe-rm above cleared /run/user/0.
+  [ -d /run/user ] || mkdir --mode=0755 -- /run/user
+  mkdir --mode=0700 -- /run/user/0
   export XDG_RUNTIME_DIR="/run/user/0"
 fi
 
@@ -369,6 +371,40 @@ validate_uuid() {
   return 1
 }
 
+publish_sbom_fragment() {
+  ## Publish the CycloneDX fragment update-torbrowser wrote (carried into the
+  ## global binary dir by the copy above) to the drop-in directory where
+  ## derivative-sbom merges it into the image SBOM. The browser is a downloaded
+  ## tarball, not a dpkg package, so this fragment is its only SBOM record. This
+  ## is the single chokepoint for EVERY system install (postinst AND Qubes
+  ## TemplateVM), so a global browser update always refreshes the published
+  ## fragment rather than leaving a stale one.
+  ##
+  ## Best-effort: a failure here must never abort an otherwise-successful
+  ## browser install. Refuse a symlink source: the fragment comes from the
+  ## tb-updater-writable cache, so copying a symlink as root could pull a
+  ## root-only file into the world-readable SBOM.
+  local src dest sbom_fragments_dir
+  sbom_fragments_dir='/usr/share/sbom/fragments.d'
+  src="${root_browser_dir}/.cache/${tb_install_folder}/sbom-fragment.json"
+  dest="${sbom_fragments_dir}/${tb_browser_name}.cdx.json"
+
+  if [ ! -f "${src}" ] || [ -L "${src}" ]; then
+    log notice "No regular SBOM fragment at '${src}', skipping publish."
+    return 0
+  fi
+  if ! mkdir --parents -- "${sbom_fragments_dir}"; then
+    log warn "Cannot create '${sbom_fragments_dir}', skipping SBOM fragment publish."
+    return 0
+  fi
+  if install --mode=0644 -- "${src}" "${dest}"; then
+    log notice "Published SBOM fragment '${dest}'."
+  else
+    log warn "Cannot publish SBOM fragment to '${dest}' (non-fatal)."
+  fi
+  return 0
+}
+
 sandbox_update_torbrowser() {
   local _ gui_enabled resume_enabled orig_wl_sock gui_ready sock_owner xhost_output
 
@@ -597,6 +633,8 @@ sandbox_update_torbrowser() {
     chown --recursive -- root:root "${root_browser_dir}"
     chmod --recursive og+rX -- "${root_browser_dir}"
     chmod --recursive u+rwX -- "${root_browser_dir}"
+
+    publish_sbom_fragment
   fi
 
   ## Drop the stash on success so a later '--resume' run doesn't
