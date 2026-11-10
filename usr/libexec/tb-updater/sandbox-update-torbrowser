@@ -44,7 +44,7 @@ if [ ! -d "${tb_lock_runtime_dir}" ] || [ -L "${tb_lock_runtime_dir}" ]; then
   ## create each component with its own deliberate mode (not --parents + a mode
   ## that only reaches the final component). safe-rm above cleared /run/user/0.
   [ -d /run/user ] || mkdir --mode=0755 -- /run/user
-  mkdir --mode=0700 -- /run/user/0
+  [ -d /run/user/0 ] || mkdir --mode=0700 -- /run/user/0
   export XDG_RUNTIME_DIR="/run/user/0"
 fi
 
@@ -385,20 +385,31 @@ save_sbom_fragment() {
   ## browser install. Refuse a symlink source: the fragment comes from the
   ## tb-updater-writable cache, so copying a symlink as root could pull a
   ## root-only file into the world-readable SBOM.
-  local src dest sbom_fragments_dir
+  local src dest sbom_fragments_dir src_real base_real
   sbom_fragments_dir='/usr/share/sbom/fragments.d'
   src="${root_browser_dir}/.cache/${tb_install_folder}/sbom-fragment.json"
   dest="${sbom_fragments_dir}/${tb_browser_name}.cdx.json"
 
-  if [ ! -f "${src}" ] || [ -L "${src}" ]; then
-    log notice "No regular SBOM fragment at '${src}', skipping."
+  ## The fragment is copied (cp --recursive) from the tb-updater-writable work
+  ## cache, so a symlink ANYWHERE in its path -- including an ANCESTOR directory
+  ## -- could make this root copy pull a root-only file into the world-readable
+  ## SBOM. Canonicalize and require the real path to stay within the global
+  ## binary dir. A missing or escaping source means we have no valid fragment
+  ## for the browser just installed; drop any stale published fragment so the
+  ## SBOM never keeps reporting an outdated version/hash.
+  src_real="$(readlink --canonicalize-existing -- "${src}" 2>/dev/null)" || src_real=''
+  base_real="$(readlink --canonicalize-existing -- "${root_browser_dir}" 2>/dev/null)" || base_real=''
+  if [ -z "${src_real}" ] || [ -z "${base_real}" ] || [ -L "${src}" ] \
+    || [ ! -f "${src_real}" ] || [ "${src_real#"${base_real}"/}" = "${src_real}" ]; then
+    log notice "No valid in-tree SBOM fragment at '${src}'; removing any stale '${dest}'."
+    safe-rm --force -- "${dest}"
     return 0
   fi
   if ! mkdir --parents -- "${sbom_fragments_dir}"; then
     log warn "Cannot create '${sbom_fragments_dir}', skipping SBOM fragment save."
     return 0
   fi
-  if install --mode=0644 -- "${src}" "${dest}"; then
+  if install --mode=0644 -- "${src_real}" "${dest}"; then
     log notice "Saved SBOM fragment to '${dest}'."
   else
     log warn "Cannot save SBOM fragment to '${dest}' (non-fatal)."

@@ -2407,13 +2407,21 @@ tb_sbom_fragment_write() {
    [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
    [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
 
-   ## Every value interpolated into the hand-built JSON must contain no '"',
-   ## '\' or control character, else the fragment would be invalid JSON and the
-   ## fail-closed merger would abort the whole image SBOM. Refuse rather than
-   ## emit broken JSON (tb_title / supplier are admin-settable via torbrowser.d).
+   ## Fields spliced into the Package URL must be purl-safe: '?', '&', '#', '/',
+   ## '@' are purl-significant, so a conservative allowlist prevents one field
+   ## (e.g. a crafted tbb_version) from injecting purl qualifiers.
+   for field in "${tbb_version_stripped}" "${tb_browser_name}" "${ARCH_DOWNLOAD}"; do
+      if ! [[ "${field}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+         log warn "Not writing SBOM fragment: a purl field has unexpected characters."
+         return 1
+      fi
+   done
+   ## Free-text JSON string fields must contain no '"', '\' or control
+   ## character, else the fragment would be invalid JSON and the fail-closed
+   ## merger would abort the whole image SBOM. Refuse rather than emit broken
+   ## JSON (tb_title / supplier are admin-settable via torbrowser.d).
    for field in \
-      "${tbb_version_stripped}" "${tb_browser_name}" "${tb_title}" \
-      "${ARCH_DOWNLOAD}" "${tb_sbom_supplier}" "${tb_sbom_supplier_url}" \
+      "${tb_title}" "${tb_sbom_supplier}" "${tb_sbom_supplier_url}" \
       "${TBB_PACKAGE_LINK}"; do
       if [[ "${field}" == *'"'* ]] || [[ "${field}" == *\\* ]] \
          || [[ "${field}" =~ [[:cntrl:]] ]]; then
@@ -2425,6 +2433,14 @@ tb_sbom_fragment_write() {
    sbom_hash=""
    if [ -f "${TBB_PACKAGE_FULL_PATH}" ]; then
       sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}" | cut -d' ' -f1)" || return 1
+      ## GNU sha256sum prefixes the line with '\' and escapes the name when the
+      ## path contains a backslash/newline, so field 1 can carry a leading '\'.
+      ## A clean SHA-256 is exactly 64 hex; refuse anything else rather than
+      ## splice an invalid hash into the purl/hashes.
+      if ! [[ "${sbom_hash}" =~ ^[0-9a-f]{64}$ ]]; then
+         log warn "Not writing SBOM fragment: computed hash is not a clean SHA-256."
+         return 1
+      fi
    fi
 
    sbom_purl="pkg:generic/${tb_browser_name}@${tbb_version_stripped}?arch=${ARCH_DOWNLOAD}"
