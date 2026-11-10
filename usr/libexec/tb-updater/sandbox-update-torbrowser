@@ -388,6 +388,16 @@ save_sbom_fragment() {
   local src dest sbom_fragments_dir src_real base_real
   sbom_fragments_dir='/usr/share/sbom/fragments.d'
   src="${root_browser_dir}/.cache/${tb_install_folder}/sbom-fragment.json"
+
+  ## tb_browser_name becomes the destination filename; require a plain basename
+  ## so a config-/wrapper-supplied value (or an accidental '/') cannot direct the
+  ## save or the stale-removal at a path OUTSIDE fragments.d.
+  case "${tb_browser_name}" in
+    */*|''|.|..)
+      log warn "Refusing SBOM fragment save: unsafe browser name '${tb_browser_name}'."
+      return 0
+      ;;
+  esac
   dest="${sbom_fragments_dir}/${tb_browser_name}.cdx.json"
 
   ## The fragment is copied (cp --recursive) from the tb-updater-writable work
@@ -402,7 +412,10 @@ save_sbom_fragment() {
   if [ -z "${src_real}" ] || [ -z "${base_real}" ] || [ -L "${src}" ] \
     || [ ! -f "${src_real}" ] || [ "${src_real#"${base_real}"/}" = "${src_real}" ]; then
     log notice "No valid in-tree SBOM fragment at '${src}'; removing any stale '${dest}'."
-    safe-rm --force -- "${dest}"
+    ## Best-effort: a failed removal must not abort the (successful) browser
+    ## install or, in a fail-closed image build, the package configuration.
+    safe-rm --force -- "${dest}" \
+      || log warn "Cannot remove stale SBOM fragment '${dest}' (non-fatal)."
     return 0
   fi
   if ! mkdir --parents -- "${sbom_fragments_dir}"; then
