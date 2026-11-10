@@ -40,9 +40,11 @@ tb_lock_runtime_dir="${XDG_RUNTIME_DIR:-/run/user/0}"
 if [ ! -d "${tb_lock_runtime_dir}" ] || [ -L "${tb_lock_runtime_dir}" ]; then
   ## In case it's a symlink.
   safe-rm --force -- "${tb_lock_runtime_dir}"
-  # shellcheck disable=SC2174
-  mkdir --mode=0700 --parents -- /run/user/0
-  chmod 0700 -- /run/user/0
+  ## /run/user may be absent during an image build / package configuration;
+  ## create each component with its own deliberate mode (not --parents + a mode
+  ## that only reaches the final component). safe-rm above cleared /run/user/0.
+  [ -d /run/user ] || mkdir --mode=0755 -- /run/user
+  [ -d /run/user/0 ] || mkdir --mode=0700 -- /run/user/0
   export XDG_RUNTIME_DIR="/run/user/0"
 fi
 
@@ -369,6 +371,65 @@ validate_uuid() {
   return 1
 }
 
+save_sbom_fragment() {
+  ## Save the CycloneDX fragment update-torbrowser wrote (carried into the
+  ## global binary dir by the copy above) into the local drop-in directory
+  ## where derivative-sbom merges it into the system SBOM. This writes a file to
+  ## a local directory only -- nothing is uploaded anywhere. The browser is a
+  ## downloaded tarball, not a dpkg package, so this fragment is its only SBOM
+  ## record. This is the single chokepoint for EVERY system install (postinst
+  ## AND Qubes TemplateVM), so a global browser update always refreshes the
+  ## saved fragment rather than leaving a stale one.
+  ##
+  ## Best-effort: a failure here must never abort an otherwise-successful
+  ## browser install. Refuse a symlink source: the fragment comes from the
+  ## tb-updater-writable cache, so copying a symlink as root could pull a
+  ## root-only file into the world-readable SBOM.
+  local src dest sbom_fragments_dir src_real base_real
+  sbom_fragments_dir='/usr/share/sbom/fragments.d'
+  src="${root_browser_dir}/.cache/${tb_install_folder}/sbom-fragment.json"
+
+  ## tb_browser_name becomes the destination filename; require a plain basename
+  ## so a config-/wrapper-supplied value (or an accidental '/') cannot direct the
+  ## save or the stale-removal at a path OUTSIDE fragments.d.
+  case "${tb_browser_name}" in
+    */*|''|.|..)
+      log warn "Refusing SBOM fragment save: unsafe browser name '${tb_browser_name}'."
+      return 0
+      ;;
+  esac
+  dest="${sbom_fragments_dir}/${tb_browser_name}.cdx.json"
+
+  ## The fragment is copied (cp --recursive) from the tb-updater-writable work
+  ## cache, so a symlink ANYWHERE in its path -- including an ANCESTOR directory
+  ## -- could make this root copy pull a root-only file into the world-readable
+  ## SBOM. Canonicalize and require the real path to stay within the global
+  ## binary dir. A missing or escaping source means we have no valid fragment
+  ## for the browser just installed; drop any stale published fragment so the
+  ## SBOM never keeps reporting an outdated version/hash.
+  src_real="$(readlink --canonicalize-existing -- "${src}" 2>/dev/null)" || src_real=''
+  base_real="$(readlink --canonicalize-existing -- "${root_browser_dir}" 2>/dev/null)" || base_real=''
+  if [ -z "${src_real}" ] || [ -z "${base_real}" ] || [ -L "${src}" ] \
+    || [ ! -f "${src_real}" ] || [ "${src_real#"${base_real}"/}" = "${src_real}" ]; then
+    log notice "No valid in-tree SBOM fragment at '${src}'; removing any stale '${dest}'."
+    ## Best-effort: a failed removal must not abort the (successful) browser
+    ## install or, in a fail-closed image build, the package configuration.
+    safe-rm --force -- "${dest}" \
+      || log warn "Cannot remove stale SBOM fragment '${dest}' (non-fatal)."
+    return 0
+  fi
+  if ! mkdir --parents -- "${sbom_fragments_dir}"; then
+    log warn "Cannot create '${sbom_fragments_dir}', skipping SBOM fragment save."
+    return 0
+  fi
+  if install --mode=0644 -- "${src_real}" "${dest}"; then
+    log notice "Saved SBOM fragment to '${dest}'."
+  else
+    log warn "Cannot save SBOM fragment to '${dest}' (non-fatal)."
+  fi
+  return 0
+}
+
 sandbox_update_torbrowser() {
   local _ gui_enabled resume_enabled orig_wl_sock gui_ready sock_owner xhost_output
 
@@ -597,6 +658,8 @@ sandbox_update_torbrowser() {
     chown --recursive -- root:root "${root_browser_dir}"
     chmod --recursive og+rX -- "${root_browser_dir}"
     chmod --recursive u+rwX -- "${root_browser_dir}"
+
+    save_sbom_fragment
   fi
 
   ## Drop the stash on success so a later '--resume' run doesn't

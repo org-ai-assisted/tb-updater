@@ -2371,6 +2371,130 @@ tb_install() {
    mv -- "${tb_extract_temp_folder}" "${tb_browser_folder}"
 }
 
+## Write a CycloneDX component fragment describing the just-installed browser,
+## so the image SBOM (debsbom enumerates dpkg packages only) can include this
+## non-dpkg component. Written into the cache folder, which
+## sandbox-update-torbrowser copies into the global binary dir AND saves into
+## the local /usr/share/sbom/fragments.d, where derivative-sbom merges it.
+##
+## Runs ONLY on the SYSTEM (global) install path -- identified by the effective
+## account being 'tb-updater', the unprivileged account BOTH root wrappers
+## (root_check --postinst AND qubes_template_check for a Qubes TemplateVM) drop
+## to before the root copy into /var/cache/tb-binary. A direct per-user run
+## (who_ami = the invoking user) installs a private browser into the user's home
+## that is NOT part of the system SBOM, so it writes nothing. Keying on
+## tb_postinst alone would miss the TemplateVM path and leave a stale fragment.
+##
+## Best-effort: an SBOM fragment is a nicety, never a reason to abort an
+## otherwise-successful browser install, so any failure logs and returns 0.
+tb_sbom_fragment_create() {
+   if [ ! "${who_ami}" = "tb-updater" ]; then
+      true "INFO: Skipping ${FUNCNAME[0]}, not the system (tb-updater) install path, ok."
+      return 0
+   fi
+   ## Called on the LHS of '||', so errexit is off inside; the critical commands
+   ## below check their own status explicitly.
+   tb_sbom_fragment_write || log warn "SBOM fragment not written (non-fatal)."
+   return 0
+}
+
+## Returns nonzero on any problem; writes atomically (temp + rename) so a
+## partial fragment is never left for sandbox-update-torbrowser to save.
+tb_sbom_fragment_write() {
+   local fragment_file fragment_tmp sbom_hash sbom_purl sbom_hashes_json field
+   fragment_file="${tb_cache_folder}/sbom-fragment.json"
+
+   [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
+   [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
+
+   ## Fields spliced into the Package URL must be purl-safe: '?', '&', '#', '/',
+   ## '@' are purl-significant, so a conservative allowlist prevents one field
+   ## (e.g. a crafted tbb_version) from injecting purl qualifiers.
+   for field in "${tbb_version_stripped}" "${tb_browser_name}" "${ARCH_DOWNLOAD}"; do
+      if ! [[ "${field}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+         log warn "Not writing SBOM fragment: a purl field has unexpected characters."
+         return 1
+      fi
+   done
+   ## Free-text JSON string fields must contain no '"', '\' or control
+   ## character, else the fragment would be invalid JSON and the fail-closed
+   ## merger would abort the whole image SBOM. Refuse rather than emit broken
+   ## JSON (tb_title / supplier are admin-settable via torbrowser.d).
+   for field in \
+      "${tb_title}" "${tb_sbom_supplier}" "${tb_sbom_supplier_url}" \
+      "${TBB_PACKAGE_LINK}"; do
+      if [[ "${field}" == *'"'* ]] || [[ "${field}" == *\\* ]] \
+         || [[ "${field}" =~ [[:cntrl:]] ]]; then
+         log warn "Not writing SBOM fragment: a field has JSON-unsafe characters."
+         return 1
+      fi
+   done
+
+   sbom_hash=""
+   if [ -f "${TBB_PACKAGE_FULL_PATH}" ]; then
+      sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}" | cut -d' ' -f1)" || return 1
+      ## GNU sha256sum prefixes the line with '\' and escapes the name when the
+      ## path contains a backslash/newline, so field 1 can carry a leading '\'.
+      ## A clean SHA-256 is exactly 64 hex; refuse anything else rather than
+      ## splice an invalid hash into the purl/hashes.
+      if ! [[ "${sbom_hash}" =~ ^[0-9a-f]{64}$ ]]; then
+         log warn "Not writing SBOM fragment: computed hash is not a clean SHA-256."
+         return 1
+      fi
+   fi
+
+   sbom_purl="pkg:generic/${tb_browser_name}@${tbb_version_stripped}?arch=${ARCH_DOWNLOAD}"
+   sbom_hashes_json=""
+   if [ -n "${sbom_hash}" ]; then
+      sbom_purl="${sbom_purl}&checksum=sha256:${sbom_hash}"
+      sbom_hashes_json="\
+  \"hashes\": [
+    {
+      \"alg\": \"SHA-256\",
+      \"content\": \"${sbom_hash}\"
+    }
+  ],
+"
+   fi
+
+   mkdir --parents -- "${tb_cache_folder}" || return 1
+   fragment_tmp="$(mktemp -- "${tb_cache_folder}/sbom-fragment.json.XXXXXX")" || return 1
+   if ! cat > "${fragment_tmp}" <<EOF
+{
+  "type": "application",
+  "bom-ref": "${tb_browser_name}@${tbb_version_stripped}",
+  "name": "${tb_title}",
+  "version": "${tbb_version_stripped}",
+  "supplier": {
+    "name": "${tb_sbom_supplier}",
+    "url": [
+      "${tb_sbom_supplier_url}"
+    ]
+  },
+  "purl": "${sbom_purl}",
+${sbom_hashes_json}  "externalReferences": [
+    {
+      "type": "distribution",
+      "url": "${TBB_PACKAGE_LINK}"
+    },
+    {
+      "type": "website",
+      "url": "${tb_sbom_supplier_url}"
+    }
+  ]
+}
+EOF
+   then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
+   if ! mv -- "${fragment_tmp}" "${fragment_file}"; then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
+   log notice "Wrote SBOM fragment '${fragment_file}'."
+}
+
 tb_cleanup() {
    if [ "${TB_NO_INSTALL:-}" = "true" ]; then
       true "INFO: Skipping ${FUNCNAME[0]}, because TB_NO_INSTALL is 'true', ok."
@@ -2491,6 +2615,7 @@ main_function() {
       tb_run_function tb_extract
       tb_run_function tb_patch
       tb_run_function tb_install
+      tb_run_function tb_sbom_fragment_create
       tb_run_function tb_cleanup
       tb_run_function tb_start_ask
       return 0
@@ -2512,6 +2637,7 @@ main_function() {
    tb_run_function tb_extract
    tb_run_function tb_patch
    tb_run_function tb_install
+   tb_run_function tb_sbom_fragment_create
    tb_run_function tb_cleanup
    tb_run_function tb_hardcoded_version_last_downloaded_save
    tb_run_function tb_start_ask
