@@ -2371,6 +2371,81 @@ tb_install() {
    mv -- "${tb_extract_temp_folder}" "${tb_browser_folder}"
 }
 
+## Write a CycloneDX component fragment describing the just-installed browser,
+## so the image SBOM (debsbom enumerates dpkg packages only) can include this
+## non-dpkg component. Written into the cache folder, which
+## sandbox-update-torbrowser copies into the global binary dir; the postinst
+## then publishes it to /usr/share/sbom/fragments.d where derivative-sbom merges
+## it. ONLY in the system (--postinst) install path: a per-user run installs a
+## private browser that is not part of the system SBOM, so it writes nothing.
+## Best-effort: never abort the install over an SBOM nicety.
+tb_sbom_fragment_create() {
+   if [ ! "${tb_postinst:-}" = "true" ]; then
+      true "INFO: Skipping ${FUNCNAME[0]}, not a --postinst (system) install, ok."
+      return 0
+   fi
+
+   local fragment_file sbom_hash sbom_purl sbom_hashes_json
+   fragment_file="${tb_cache_folder}/sbom-fragment.json"
+
+   ## tbb_version_stripped is upstream-derived; refuse to emit a fragment with
+   ## a version that could break the JSON rather than hand-escape it.
+   if ! [[ "${tbb_version_stripped}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+      log warn "Not writing SBOM fragment: version '${tbb_version_stripped}' has unexpected characters."
+      return 0
+   fi
+
+   [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
+   [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
+
+   sbom_hash=""
+   if [ -f "${TBB_PACKAGE_FULL_PATH}" ]; then
+      sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}" | cut -d' ' -f1)"
+   fi
+
+   sbom_purl="pkg:generic/${tb_browser_name}@${tbb_version_stripped}?arch=${ARCH_DOWNLOAD}"
+   sbom_hashes_json=""
+   if [ -n "${sbom_hash}" ]; then
+      sbom_purl="${sbom_purl}&checksum=sha256:${sbom_hash}"
+      sbom_hashes_json="\
+  \"hashes\": [
+    {
+      \"alg\": \"SHA-256\",
+      \"content\": \"${sbom_hash}\"
+    }
+  ],
+"
+   fi
+
+   mkdir --parents -- "${tb_cache_folder}"
+   cat > "${fragment_file}" <<EOF
+{
+  "type": "application",
+  "bom-ref": "${tb_browser_name}@${tbb_version_stripped}",
+  "name": "${tb_title}",
+  "version": "${tbb_version_stripped}",
+  "supplier": {
+    "name": "${tb_sbom_supplier}",
+    "url": [
+      "${tb_sbom_supplier_url}"
+    ]
+  },
+  "purl": "${sbom_purl}",
+${sbom_hashes_json}  "externalReferences": [
+    {
+      "type": "distribution",
+      "url": "${TBB_PACKAGE_LINK}"
+    },
+    {
+      "type": "website",
+      "url": "${tb_sbom_supplier_url}"
+    }
+  ]
+}
+EOF
+   log notice "Wrote SBOM fragment '${fragment_file}'."
+}
+
 tb_cleanup() {
    if [ "${TB_NO_INSTALL:-}" = "true" ]; then
       true "INFO: Skipping ${FUNCNAME[0]}, because TB_NO_INSTALL is 'true', ok."
@@ -2491,6 +2566,7 @@ main_function() {
       tb_run_function tb_extract
       tb_run_function tb_patch
       tb_run_function tb_install
+      tb_run_function tb_sbom_fragment_create
       tb_run_function tb_cleanup
       tb_run_function tb_start_ask
       return 0
@@ -2512,6 +2588,7 @@ main_function() {
    tb_run_function tb_extract
    tb_run_function tb_patch
    tb_run_function tb_install
+   tb_run_function tb_sbom_fragment_create
    tb_run_function tb_cleanup
    tb_run_function tb_hardcoded_version_last_downloaded_save
    tb_run_function tb_start_ask
