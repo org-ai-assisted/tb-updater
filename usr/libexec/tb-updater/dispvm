@@ -126,33 +126,20 @@ main() {
    ## /var/cache path. Recursive chown does not follow symlinks.
    chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
 
-   ## The [ -L ] reject above (pre-mount, pre-session) is the primary guard: it
-   ## trips on any symlink form at these exact paths, plus the bind source and
-   ## intermediate components. X-mount.nocanonicalize is only a mount-layer
-   ## backstop (util-linux 2.41+; a no-op on older) that refuses a bare
-   ## dir-symlink target -- NOT a trailing-slash/dot or a file symlink (envelope:
-   ## org-ai-assisted/mount-nocanonicalize-symlink-refusal). These are bare dirs.
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
    if [ -d "${tb_binary_cache_dir}/.tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
+      ## 'mountpoint' doubles as a directory existence check.
+      if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.tb" >/dev/null 2>&1; then
+         mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
+      fi
    fi
    if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
-   fi
-
-   ## results in:
-   # mount | grep -- home
-   # /dev/xvdb on /home type ext4 (rw,nosuid,nodev,noexec,relatime,discard)
-   # /dev/xvda3 on /home/user/.tb type ext4 (rw,nosuid,nodev,noatime,discard)
-   # /dev/xvda3 on /rw/home/user/.tb type ext4 (rw,noatime,discard)
-   # /dev/xvda3 on /home/user/.cache/tb type ext4 (rw,nosuid,nodev,noatime,discard)
-   # /dev/xvda3 on /rw/home/user/.cache/tb type ext4 (rw,noatime,discard)
-
-   ## Remount with nosuid,nodev.
-   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.tb" ]; then
-      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
-   fi
-   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ]; then
-      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
+      if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" >/dev/null 2>&1; then
+         mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
+      fi
    fi
 
    ## results in:
