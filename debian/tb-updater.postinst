@@ -10,9 +10,12 @@ source /usr/libexec/helper-scripts/pre.bsh
 source /usr/libexec/helper-scripts/log_run_die.sh
 log_level='debug'
 
-## style-ok: no-strict - Debian maintainer script.
-
 set -o errexit
+set -o nounset
+set -o pipefail
+set -o errtrace
+shopt -s inherit_errexit
+shopt -s shift_verbose
 export LC_ALL=C
 
 true "
