@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 ## Copyright (C) 2019 - 2025 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
 ## See the file COPYING for copying conditions.
@@ -134,11 +134,22 @@ main() {
       if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.tb" >/dev/null 2>&1; then
          mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
       fi
+      ## Drop any inherited noexec so Tor Browser can exec from its home
+      ## (remount-secure makes /home and /var/cache noexec).
+      tb_exec_home="${home_base_dir}/${user_name}/.tb"
+      if [[ ",$(findmnt --noheadings --output options --target "${tb_exec_home}" || true)," == *,noexec,* ]]; then
+         mount -o remount,bind,nosuid,nodev,X-mount.nocanonicalize -- "${tb_exec_home}"
+      fi
    fi
    if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
       if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" >/dev/null 2>&1; then
          mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
+      fi
+      ## Drop any inherited noexec so Tor Browser can exec from its cache.
+      tb_exec_cache="${home_base_dir}/${user_name}/.cache/tb"
+      if [[ ",$(findmnt --noheadings --output options --target "${tb_exec_cache}" || true)," == *,noexec,* ]]; then
+         mount -o remount,bind,nosuid,nodev,X-mount.nocanonicalize -- "${tb_exec_cache}"
       fi
    fi
 
