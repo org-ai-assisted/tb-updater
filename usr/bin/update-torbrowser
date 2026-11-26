@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 ## Copyright (C) 2012 - 2025 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
 ## See the file COPYING for copying conditions.
@@ -2438,7 +2438,7 @@ tb_sbom_fragment_write() {
 {
   "type": "application",
   "bom-ref": "${tb_browser_name}@${tbb_version_stripped}",
-  "name": "${tb_browser_name}",
+  "name": "${tb_title}",
   "version": "${tbb_version_stripped}",
   "supplier": {
     "name": "${tb_sbom_supplier}",
