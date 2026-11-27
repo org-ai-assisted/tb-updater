@@ -1,0 +1,82 @@
+#!/bin/bash
+
+## Copyright (C) 2012 - 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
+## See the file COPYING for copying conditions.
+
+## AI-Assisted
+
+## Shared exec-remount core for Tor Browser home directories. Sourced by the PAM
+## session hook (tb-home-remount-exec) and the Qubes DispVM setup (dispvm) so the
+## symlink guard, ownership prep, and the noexec->exec remount live in ONE place.
+##
+## Pure library: no strict-mode preamble and no auto-run guard -- the sourcing
+## script owns strict mode (sourcing a strict 'set -o' here would leak it into the
+## caller). 'return', never 'exit'.
+
+## style-ok: no-has -- sourced library fragment, no self-contained dispatch.
+## style-ok: no-strict -- pure sourced library; the sourcing script owns strict mode
+## (a top-level 'set -o' here would leak into the caller).
+## style-ok: R-003 -- 3-space indent to match the tb-updater helpers.
+# shellcheck shell=bash
+
+## Refuse a symlink at any target: a symlink could redirect the bind mount or the
+## chown onto an attacker-chosen path. Caller treats a non-zero return as fatal.
+tb_remount_exec_refuse_symlinks() {
+   local target
+   for target in "$@"; do
+      if [ -L "${target}" ]; then
+         printf '%s\n' "${0}: ERROR: refusing unexpected symlink at '${target}'!" >&2
+         return 1
+      fi
+   done
+   return 0
+}
+
+## Ensure each directory exists, created AS the owner (privilege-dropped), never
+## as root. A root 'mkdir --parents' would follow a user-planted PARENT symlink:
+## the final-component '[ -L ]' guard cannot see a parent component, and is racy
+## regardless (TOCTOU), so a root create+chown lets the account redirect root into
+## making and owning a directory at an arbitrary path (e.g. /etc/tb). Creating as
+## the owner crosses no privilege boundary -- a symlink the account plants in its
+## own home can only reach paths it may already write -- so no chown is needed and
+## the escalation primitive is gone. This runs for an interactive login while the
+## account is active, so the boot-time 'no racing user' assumption does not hold.
+tb_remount_exec_prepare_owner() {
+   local owner="$1"
+   shift
+   local dir
+   for dir in "$@"; do
+      ## Best-effort: if the account cannot create it (e.g. a pre-existing
+      ## root-owned parent), skip that dir rather than aborting the whole hook --
+      ## apply() no-ops a missing dir and check_noexec is the launch-time fail-safe.
+      ## Never recover by chowning as root: that is the escalation this avoids.
+      runuser -u "${owner}" -- mkdir --parents -- "${dir}" || true
+   done
+}
+
+## Make one directory executable, but ONLY when its covering mount is noexec --
+## so a re-login (or a second caller) does not stack another bind mount on an
+## already-exec directory. Bind the directory onto itself, then remount dropping
+## noexec while keeping nosuid,nodev. 'findmnt --target' reports the COVERING
+## mount, so an inherited noexec (a fresh dir under a noexec /home) is detected.
+tb_remount_exec_apply() {
+   local dir="$1" mount_options
+   mount_options="$(findmnt --noheadings --output OPTIONS --target "${dir}" 2>/dev/null || true)"
+   case ",${mount_options}," in
+   *",noexec,"*)
+      ## 'remount,bind' needs ${dir} to be its OWN mount; self-bind it first
+      ## unless it already is one (the Qubes DispVM setup binds the read-only
+      ## cache onto it beforehand -- do not stack a second bind there).
+      if ! mountpoint --quiet "${dir}"; then
+         mount --bind --options X-mount.nocanonicalize -- "${dir}" "${dir}"
+      fi
+      ## Drop noexec while keeping nosuid,nodev. The explicit 'exec' is REQUIRED:
+      ## on a bind remount, omitting noexec does NOT clear it (the kernel keeps
+      ## the inherited flag) -- only a positive 'exec' turns it off.
+      mount --options remount,bind,nosuid,nodev,exec,X-mount.nocanonicalize -- "${dir}"
+      ;;
+   *)
+      true "INFO: '${dir}' is already exec; nothing to do."
+      ;;
+   esac
+}

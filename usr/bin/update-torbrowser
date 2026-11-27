@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 ## Copyright (C) 2012 - 2025 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
 ## See the file COPYING for copying conditions.
@@ -2371,6 +2371,111 @@ tb_install() {
    mv -- "${tb_extract_temp_folder}" "${tb_browser_folder}"
 }
 
+## Write a CycloneDX component fragment describing the just-installed browser.
+## sandbox-update-torbrowser will later copy it into the system fragments dir.
+tb_sbom_fragment_create() {
+   if [ ! "${who_ami}" = "tb-updater" ]; then
+      true "INFO: Skipping ${FUNCNAME[0]}, not the system install path, ok."
+      return 0
+   fi
+   tb_sbom_fragment_write || log warn "SBOM fragment not written."
+   return 0
+}
+
+tb_sbom_fragment_write() {
+   local fragment_file fragment_tmp sbom_hash sbom_purl sbom_hashes_json field
+   fragment_file="${tb_cache_folder}/sbom-fragment.json"
+
+   ## Remove any previous fragment first, so a failed write below cannot leave a
+   ## stale earlier-version fragment in the cache for save_sbom_fragment to
+   ## publish as the current version's SBOM. Removal failure only warns.
+   safe-rm --force -- "${fragment_file}" \
+      || log warn "Cannot remove stale SBOM fragment '${fragment_file}'."
+
+   [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
+   [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
+
+   for field in "${tbb_version_stripped}" "${tb_browser_name}" "${ARCH_DOWNLOAD}"; do
+      if ! [[ "${field}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+         log warn "Not writing SBOM fragment: purl field '$(sanitize-string -- 128 "${field}")' has unexpected characters."
+         return 1
+      fi
+   done
+
+   for field in \
+      "${tb_title}" "${tb_sbom_supplier}" "${tb_sbom_supplier_url}" \
+      "${TBB_PACKAGE_LINK}"; do
+      if [[ "${field}" == *'"'* ]] || [[ "${field}" == *\\* ]] \
+         || [[ "${field}" =~ [[:cntrl:]] ]]; then
+         log warn "Not writing SBOM fragment: JSON field '$(sanitize-string -- 4096 "${field}")' has JSON-unsafe characters."
+         return 1
+      fi
+   done
+
+   sbom_hash=""
+   if [ -f "${TBB_PACKAGE_FULL_PATH}" ]; then
+      sbom_hash="$(sha256sum -- "${TBB_PACKAGE_FULL_PATH}")" || return 1
+      sbom_hash="${sbom_hash%% *}"
+      ## GNU sha256sum prefixes the hash with '\' if the path contains some
+      ## special characters.
+      sbom_hash="${sbom_hash#\\}"
+      if ! [[ "${sbom_hash}" =~ ^[0-9a-f]{64}$ ]]; then
+         log warn "Not writing SBOM fragment: computed hash is not a clean SHA-256."
+         return 1
+      fi
+   fi
+
+   sbom_purl="pkg:generic/${tb_browser_name}@${tbb_version_stripped}?arch=${ARCH_DOWNLOAD}"
+   sbom_hashes_json=""
+   if [ -n "${sbom_hash}" ]; then
+      sbom_purl="${sbom_purl}&checksum=sha256:${sbom_hash}"
+      sbom_hashes_json="\
+  \"hashes\": [
+    {
+      \"alg\": \"SHA-256\",
+      \"content\": \"${sbom_hash}\"
+    }
+  ],
+"
+   fi
+
+   fragment_tmp="$(mktemp -- "${tb_cache_folder}/sbom-fragment.json.XXXXXX")" || return 1
+   if ! cat > "${fragment_tmp}" <<EOF
+{
+  "type": "application",
+  "bom-ref": "${tb_browser_name}@${tbb_version_stripped}",
+  "name": "${tb_title}",
+  "version": "${tbb_version_stripped}",
+  "supplier": {
+    "name": "${tb_sbom_supplier}",
+    "url": [
+      "${tb_sbom_supplier_url}"
+    ]
+  },
+  "purl": "${sbom_purl}",
+${sbom_hashes_json}  "externalReferences": [
+    {
+      "type": "distribution",
+      "url": "${TBB_PACKAGE_LINK}"
+    },
+    {
+      "type": "website",
+      "url": "${tb_sbom_supplier_url}"
+    }
+  ]
+}
+EOF
+   then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
+   if ! mv -- "${fragment_tmp}" "${fragment_file}"; then
+      safe-rm --force -- "${fragment_tmp}"
+      return 1
+   fi
+   log notice "Wrote SBOM fragment '${fragment_file}'."
+}
+
 tb_cleanup() {
    if [ "${TB_NO_INSTALL:-}" = "true" ]; then
       true "INFO: Skipping ${FUNCNAME[0]}, because TB_NO_INSTALL is 'true', ok."
@@ -2491,6 +2596,7 @@ main_function() {
       tb_run_function tb_extract
       tb_run_function tb_patch
       tb_run_function tb_install
+      tb_run_function tb_sbom_fragment_create
       tb_run_function tb_cleanup
       tb_run_function tb_start_ask
       return 0
@@ -2512,6 +2618,7 @@ main_function() {
    tb_run_function tb_extract
    tb_run_function tb_patch
    tb_run_function tb_install
+   tb_run_function tb_sbom_fragment_create
    tb_run_function tb_cleanup
    tb_run_function tb_hardcoded_version_last_downloaded_save
    tb_run_function tb_start_ask

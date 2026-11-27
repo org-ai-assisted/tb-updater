@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 ## Copyright (C) 2019 - 2025 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
 ## See the file COPYING for copying conditions.
@@ -25,6 +25,11 @@ fi
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
+
+## Shared exec-remount core, resolved as a tb-updater sibling.
+tb_remount_exec_lib="$(dirname -- "$(readlink --canonicalize -- "${BASH_SOURCE[0]}")")/tb-remount-exec.bsh"
+# shellcheck source=./tb-remount-exec.bsh
+source "${tb_remount_exec_lib}"
 
 home_base_dir="/home"
 tb_binary_cache_dir="/var/cache/tb-binary"
@@ -93,7 +98,7 @@ main() {
 
    ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
    ## because this script is run before sysinit.target comes up.
-   for tb_mount_point in \
+   tb_remount_exec_refuse_symlinks \
       "${home_base_dir}/${user_name}/.tb" \
       "${home_base_dir}/${user_name}/.cache" \
       "${home_base_dir}/${user_name}/.cache/tb" \
@@ -102,12 +107,8 @@ main() {
       "${tb_binary_cache_dir}/.cache/tb" \
       "${qubes_rw_home_base_dir}/${user_name}/.tb" \
       "${qubes_rw_home_base_dir}/${user_name}/.cache" \
-      "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ; do
-      if [ -L "${tb_mount_point}" ]; then
-         printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
-         exit 1
-      fi
-   done
+      "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" \
+      || exit 1
 
    ## There is no way to prevent chown from dereferencing symlinks that occur
    ## anywhere other than the last path component. --no-dereference is defense
@@ -126,33 +127,25 @@ main() {
    ## /var/cache path. Recursive chown does not follow symlinks.
    chown --recursive --no-dereference -- "${user_name}:${user_name}" "${tb_binary_cache_dir}"
 
-   ## The [ -L ] reject above (pre-mount, pre-session) is the primary guard: it
-   ## trips on any symlink form at these exact paths, plus the bind source and
-   ## intermediate components. X-mount.nocanonicalize is only a mount-layer
-   ## backstop (util-linux 2.41+; a no-op on older) that refuses a bare
-   ## dir-symlink target -- NOT a trailing-slash/dot or a file symlink (envelope:
-   ## org-ai-assisted/mount-nocanonicalize-symlink-refusal). These are bare dirs.
+   ## There is similarly no way to prevent mount from always dereferencing
+   ## symlinks, but the symlink guard above gives us sufficient safety.
    if [ -d "${tb_binary_cache_dir}/.tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.tb" "${home_base_dir}/${user_name}/.tb"
+      ## 'mountpoint' doubles as a directory existence check.
+      if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.tb" >/dev/null 2>&1; then
+         mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
+      fi
+      ## Drop any inherited noexec so Tor Browser can exec from its home
+      ## (remount-secure makes /home and /var/cache noexec).
+      tb_remount_exec_apply "${home_base_dir}/${user_name}/.tb"
    fi
    if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
-   fi
-
-   ## results in:
-   # mount | grep -- home
-   # /dev/xvdb on /home type ext4 (rw,nosuid,nodev,noexec,relatime,discard)
-   # /dev/xvda3 on /home/user/.tb type ext4 (rw,nosuid,nodev,noatime,discard)
-   # /dev/xvda3 on /rw/home/user/.tb type ext4 (rw,noatime,discard)
-   # /dev/xvda3 on /home/user/.cache/tb type ext4 (rw,nosuid,nodev,noatime,discard)
-   # /dev/xvda3 on /rw/home/user/.cache/tb type ext4 (rw,noatime,discard)
-
-   ## Remount with nosuid,nodev.
-   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.tb" ]; then
-      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.tb"
-   fi
-   if [ -d "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ]; then
-      mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
+      if mountpoint "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" >/dev/null 2>&1; then
+         mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
+      fi
+      ## Drop any inherited noexec so Tor Browser can exec from its cache.
+      tb_remount_exec_apply "${home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:
