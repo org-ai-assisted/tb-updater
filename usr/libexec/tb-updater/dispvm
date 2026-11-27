@@ -26,6 +26,11 @@ source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/strings.bsh
 # shellcheck source=../../../../helper-scripts/usr/libexec/helper-scripts/has.bsh
 source "${HELPER_SCRIPTS_PATH:-}"/usr/libexec/helper-scripts/has.bsh
 
+## Shared exec-remount core, resolved as a tb-updater sibling.
+tb_remount_exec_lib="$(dirname -- "$(readlink --canonicalize -- "${BASH_SOURCE[0]}")")/tb-remount-exec.bsh"
+# shellcheck source=./tb-remount-exec.bsh
+source "${tb_remount_exec_lib}"
+
 home_base_dir="/home"
 tb_binary_cache_dir="/var/cache/tb-binary"
 qubes_rw_home_base_dir="/rw/home"
@@ -93,7 +98,7 @@ main() {
 
    ## Early symlink check. Vulnerable to TOCTOU but this is not a problem
    ## because this script is run before sysinit.target comes up.
-   for tb_mount_point in \
+   tb_remount_exec_refuse_symlinks \
       "${home_base_dir}/${user_name}/.tb" \
       "${home_base_dir}/${user_name}/.cache" \
       "${home_base_dir}/${user_name}/.cache/tb" \
@@ -102,12 +107,8 @@ main() {
       "${tb_binary_cache_dir}/.cache/tb" \
       "${qubes_rw_home_base_dir}/${user_name}/.tb" \
       "${qubes_rw_home_base_dir}/${user_name}/.cache" \
-      "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" ; do
-      if [ -L "${tb_mount_point}" ]; then
-         printf '%s\n' "$0: ERROR: refusing unexpected symlink at '${tb_mount_point}'!" >&2
-         exit 1
-      fi
-   done
+      "${qubes_rw_home_base_dir}/${user_name}/.cache/tb" \
+      || exit 1
 
    ## There is no way to prevent chown from dereferencing symlinks that occur
    ## anywhere other than the last path component. --no-dereference is defense
@@ -136,10 +137,7 @@ main() {
       fi
       ## Drop any inherited noexec so Tor Browser can exec from its home
       ## (remount-secure makes /home and /var/cache noexec).
-      tb_exec_home="${home_base_dir}/${user_name}/.tb"
-      if [[ ",$(findmnt --noheadings --output options --target "${tb_exec_home}" || true)," == *,noexec,* ]]; then
-         mount -o remount,bind,nosuid,nodev,X-mount.nocanonicalize -- "${tb_exec_home}"
-      fi
+      tb_remount_exec_apply "${home_base_dir}/${user_name}/.tb"
    fi
    if [ -d "${tb_binary_cache_dir}/.cache/tb" ]; then
       mount --bind -o nosuid,nodev,X-mount.nocanonicalize -- "${tb_binary_cache_dir}/.cache/tb" "${home_base_dir}/${user_name}/.cache/tb"
@@ -147,10 +145,7 @@ main() {
          mount -o remount,nosuid,nodev,X-mount.nocanonicalize -- "${qubes_rw_home_base_dir}/${user_name}/.cache/tb"
       fi
       ## Drop any inherited noexec so Tor Browser can exec from its cache.
-      tb_exec_cache="${home_base_dir}/${user_name}/.cache/tb"
-      if [[ ",$(findmnt --noheadings --output options --target "${tb_exec_cache}" || true)," == *,noexec,* ]]; then
-         mount -o remount,bind,nosuid,nodev,X-mount.nocanonicalize -- "${tb_exec_cache}"
-      fi
+      tb_remount_exec_apply "${home_base_dir}/${user_name}/.cache/tb"
    fi
 
    ## results in:

@@ -1,0 +1,7 @@
+Name: Remount Tor Browser home dirs exec for the Tor Browser account (by package tb-updater)
+Default: yes
+Priority: 95
+Session-Type: Additional
+Session-Interactive-Only: yes
+Session:
+	optional	pam_exec.so quiet /usr/libexec/tb-updater/tb-home-remount-exec

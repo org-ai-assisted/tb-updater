@@ -1,0 +1,89 @@
+#!/bin/bash
+
+## Copyright (C) 2025 - 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
+## See the file COPYING for copying conditions.
+
+## style-ok: no-has - self-contained; runs via pam_exec with a minimal environment.
+## style-ok: R-003 - 3-space indent to match the tb-updater helpers.
+
+## Layer the Tor Browser exec exception for the Tor Browser account.
+##
+## remount-secure keeps /home noexec system-wide at level 3, but Tor Browser must
+## exec from '~/.tb' (and its '~/.cache/tb'). This runs as root via pam_exec in
+## the session stack (Priority 95, after pam_mkhomedir at Priority 100 created the
+## home), INSIDE the session's pam_namespace-unshared mount namespace, so the exec
+## bind-remount is session-local to the Tor Browser user and -- unlike a remount
+## done in the init namespace by a root helper -- is actually visible to the
+## browser the user launches.
+##
+## This is the single exec-remount trigger for the user's home, on both non-Qubes
+## and Qubes. On Qubes the DispVM data layout (binding the read-only
+## /var/cache/tb-binary into the home) is still prepared by
+## tb-updater-dispvm.service; this hook only ensures the home dirs are exec, and
+## the shared helper's per-directory noexec gate makes a redundant pass a no-op.
+##
+## No-op unless /home is currently noexec (remount-secure level 3).
+
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o errtrace
+shopt -s inherit_errexit
+shopt -s shift_verbose
+export LC_ALL=C
+
+## pam_exec may run with a minimal PATH; resolve mount/findmnt reliably.
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+
+## Shared exec-remount core (symlink guard, ownership prep, noexec->exec remount),
+## resolved as a sibling so it works from the install path and a source checkout.
+tb_remount_exec_lib="$(dirname -- "$(readlink --canonicalize -- "${BASH_SOURCE[0]}")")/tb-remount-exec.bsh"
+# shellcheck source=./tb-remount-exec.bsh
+source "${tb_remount_exec_lib}"
+
+## pam_exec runs the helper on session open and close; only act on open.
+if [ "${PAM_TYPE:-}" = 'close_session' ]; then
+   exit 0
+fi
+
+## Only for the Tor Browser account's own login (Kicksecure default 'user').
+tb_user="${tb_home_exec_user:-user}"
+if [ "${PAM_USER:-}" != "${tb_user}" ]; then
+   exit 0
+fi
+
+home_folder="/home/${tb_user}"
+
+## pam_mkhomedir has not created the home yet, or it was removed.
+if [ ! -d "${home_folder}" ]; then
+   exit 0
+fi
+
+## Only act when /home is currently noexec (remount-secure level 3). At lower
+## levels Tor Browser already execs from its home, so this is a strict no-op.
+mount_options="$(findmnt --noheadings --output options --target "${home_folder}" || true)"
+case ",${mount_options}," in
+   *,noexec,*)
+      true "INFO: '${home_folder}' is noexec; applying the Tor Browser exec exception."
+      ;;
+   *)
+      exit 0
+      ;;
+esac
+
+tb_dir="${home_folder}/.tb"
+tb_cache_parent="${home_folder}/.cache"
+tb_cache_dir="${tb_cache_parent}/tb"
+
+## Refuse a user-planted symlink at any target path; root must not bind-mount or
+## chown through it. TOCTOU-vulnerable but a meaningful defense in depth, and the
+## exec exception is session-local anyway (no cross-user reach).
+tb_remount_exec_refuse_symlinks "${tb_dir}" "${tb_cache_parent}" "${tb_cache_dir}" || exit 1
+
+## Pre-create + own so a first 'update-torbrowser' install lands in an exec mount.
+## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- safe, symlink guarded above.
+tb_remount_exec_prepare_owner "${tb_user}" "${tb_dir}" "${tb_cache_parent}" "${tb_cache_dir}"
+
+## Session-local exec exception (no-op per directory if already exec).
+tb_remount_exec_apply "${tb_dir}"
+tb_remount_exec_apply "${tb_cache_dir}"

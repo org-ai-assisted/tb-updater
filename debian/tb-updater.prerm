@@ -1,0 +1,42 @@
+#!/bin/bash
+
+## Copyright (C) 2025 - 2026 ENCRYPTED SUPPORT LLC <adrelanos@whonix.org>
+## See the file COPYING for copying conditions.
+
+## style-ok: R-003 - 3-space indent to match the tb-updater maintainer scripts.
+
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o errtrace
+shopt -s inherit_errexit
+shopt -s shift_verbose
+export LC_ALL=C
+
+true "
+#####################################################################
+## INFO: BEGIN: ${DPKG_MAINTSCRIPT_PACKAGE:-} ${DPKG_MAINTSCRIPT_NAME:-} $*
+#####################################################################
+"
+
+## Drop the tb-home-exec pam profile from the session stack while its profile
+## file is still present (removed after prerm). Runs only on actual removal, not
+## on upgrade.
+if [ "${1:-}" = 'remove' ]; then
+   pam-auth-update --package --remove tb-home-exec || true
+fi
+
+true "INFO: debhelper beginning here."
+
+#DEBHELPER#
+
+true "INFO: Done with debhelper."
+
+true "
+#####################################################################
+## INFO: END  : ${DPKG_MAINTSCRIPT_PACKAGE:-} ${DPKG_MAINTSCRIPT_NAME:-} $*
+#####################################################################
+"
+
+## Explicitly 'exit 0' so a trapped error later can be ignored.
+exit 0
