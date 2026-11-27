@@ -2386,6 +2386,12 @@ tb_sbom_fragment_write() {
    local fragment_file fragment_tmp sbom_hash sbom_purl sbom_hashes_json field
    fragment_file="${tb_cache_folder}/sbom-fragment.json"
 
+   ## Remove any previous fragment first, so a failed write below cannot leave a
+   ## stale earlier-version fragment in the cache for save_sbom_fragment to
+   ## publish as the current version's SBOM. Removal failure only warns.
+   safe-rm --force -- "${fragment_file}" \
+      || log warn "Cannot remove stale SBOM fragment '${fragment_file}'."
+
    [ -n "${tb_sbom_supplier:-}" ] || tb_sbom_supplier="The Tor Project"
    [ -n "${tb_sbom_supplier_url:-}" ] || tb_sbom_supplier_url="https://www.torproject.org"
 
