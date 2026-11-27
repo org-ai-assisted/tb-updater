@@ -11,10 +11,12 @@
 ## remount-secure keeps /home noexec system-wide at level 3, but Tor Browser must
 ## exec from '~/.tb' (and its '~/.cache/tb'). This runs as root via pam_exec in
 ## the session stack (Priority 95, after pam_mkhomedir at Priority 100 created the
-## home), INSIDE the session's pam_namespace-unshared mount namespace, so the exec
-## bind-remount is session-local to the Tor Browser user and -- unlike a remount
-## done in the init namespace by a root helper -- is actually visible to the
-## browser the user launches.
+## home). It acts ONLY when the session already runs in a mount namespace unshared
+## from init (pam_namespace active, having run earlier in the stack), so the exec
+## bind-remount is session-local to the Tor Browser user and visible to the browser
+## it launches. In the init namespace (pam_namespace inactive) it does NOTHING: a
+## remount there would be system-wide and permanent, so the namespace guard below
+## is what keeps this safe -- not an assumption that pam_namespace is present.
 ##
 ## This is the single exec-remount trigger for the user's home, on both non-Qubes
 ## and Qubes. On Qubes the DispVM data layout (binding the read-only
@@ -71,17 +73,35 @@ case ",${mount_options}," in
       ;;
 esac
 
+## Act ONLY in a mount namespace unshared from init. Without pam_namespace the
+## session shares init's namespace, where this bind-remount would be system-wide
+## and never undone (pam_exec close_session does not umount) -- and a user-planted
+## symlink could then make an arbitrary noexec path exec for the whole system. In
+## that case do nothing; torbrowser's launch-time check_noexec (exit 5) is the
+## fail-safe until pam_namespace lands. (pam_namespace must run EARLIER in the
+## session stack than this hook, or the namespace is not yet unshared here and the
+## exception is skipped -- verify the ordering when pam_namespace ships.)
+if [ "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/1/ns/mnt)" ]; then
+   true "INFO: mount namespace shared with init (pam_namespace inactive); skipping."
+   exit 0
+fi
+
 tb_dir="${home_folder}/.tb"
 tb_cache_parent="${home_folder}/.cache"
 tb_cache_dir="${tb_cache_parent}/tb"
 
-## Refuse a user-planted symlink at any target path; root must not bind-mount or
-## chown through it. TOCTOU-vulnerable but a meaningful defense in depth, and the
-## exec exception is session-local anyway (no cross-user reach).
+## Refuse a user-planted symlink at the final component of any target before the
+## bind-remount. Defense in depth: TOCTOU-racy and parent components are unchecked,
+## so it is NOT the primary guard -- privilege-dropped creation (below) removes the
+## root create+chown escalation, and the namespace guard above confines the remount
+## to this session. The residual, a same-session race swapping a target for a
+## symlink between this check and the remount, is session-local to this account.
 tb_remount_exec_refuse_symlinks "${tb_dir}" "${tb_cache_parent}" "${tb_cache_dir}" || exit 1
 
-## Pre-create + own so a first 'update-torbrowser' install lands in an exec mount.
-## style-ok: lpe-symlink-follow,lpe-root-write-user-path -- safe, symlink guarded above.
+## Pre-create (AS the account, not root) so a first 'update-torbrowser' install
+## lands in an exec mount. Privilege-dropped so a user-planted parent symlink
+## cannot redirect a root mkdir/chown onto an arbitrary path.
+## style-ok: lpe-symlink-follow -- remount is namespace-confined; see note above.
 tb_remount_exec_prepare_owner "${tb_user}" "${tb_dir}" "${tb_cache_parent}" "${tb_cache_dir}"
 
 ## Session-local exec exception (no-op per directory if already exec).

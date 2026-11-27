@@ -32,16 +32,21 @@ tb_remount_exec_refuse_symlinks() {
    return 0
 }
 
-## Ensure each directory exists and is owned by the Tor Browser account. Create
-## with --parents; chown --no-dereference so a symlink (already refused above)
-## can never redirect ownership.
+## Ensure each directory exists, created AS the owner (privilege-dropped), never
+## as root. A root 'mkdir --parents' would follow a user-planted PARENT symlink:
+## the final-component '[ -L ]' guard cannot see a parent component, and is racy
+## regardless (TOCTOU), so a root create+chown lets the account redirect root into
+## making and owning a directory at an arbitrary path (e.g. /etc/tb). Creating as
+## the owner crosses no privilege boundary -- a symlink the account plants in its
+## own home can only reach paths it may already write -- so no chown is needed and
+## the escalation primitive is gone. This runs for an interactive login while the
+## account is active, so the boot-time 'no racing user' assumption does not hold.
 tb_remount_exec_prepare_owner() {
    local owner="$1"
    shift
    local dir
    for dir in "$@"; do
-      mkdir --parents -- "${dir}"
-      chown --no-dereference -- "${owner}:${owner}" "${dir}"
+      runuser -u "${owner}" -- mkdir --parents -- "${dir}"
    done
 }
 
