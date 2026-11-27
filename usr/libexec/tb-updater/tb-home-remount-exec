@@ -86,6 +86,14 @@ if [ "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/1/ns/mnt)" ]; then
    exit 0
 fi
 
+## An unshared namespace is necessary but not sufficient: unshare(2) keeps each
+## mount's propagation type, so with /home shared (the systemd default) the exec
+## remounts below would propagate back to init's peer group -- system-wide, exactly
+## what the guard is meant to prevent. Make this session's tree slave: it still sees
+## system mounts (receives propagation) but emits none, so the exec exception stays
+## local to the session. Enforced here, never assumed of pam_namespace.
+mount --make-rslave /
+
 tb_dir="${home_folder}/.tb"
 tb_cache_parent="${home_folder}/.cache"
 tb_cache_dir="${tb_cache_parent}/tb"

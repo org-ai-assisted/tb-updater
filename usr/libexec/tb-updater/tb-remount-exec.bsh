@@ -46,7 +46,11 @@ tb_remount_exec_prepare_owner() {
    shift
    local dir
    for dir in "$@"; do
-      runuser -u "${owner}" -- mkdir --parents -- "${dir}"
+      ## Best-effort: if the account cannot create it (e.g. a pre-existing
+      ## root-owned parent), skip that dir rather than aborting the whole hook --
+      ## apply() no-ops a missing dir and check_noexec is the launch-time fail-safe.
+      ## Never recover by chowning as root: that is the escalation this avoids.
+      runuser -u "${owner}" -- mkdir --parents -- "${dir}" || true
    done
 }
 
